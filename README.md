@@ -175,8 +175,6 @@ Benchmarks run on AMD Ryzen 9 9950X (32 threads), Go 1.23+, comparing against:
 | **Mixed R/W** | 30.9 ns | **7.1 ns** | 19.6 ns |
 | **High Contention** | 64.6 ns | **17.2 ns** | 43.1 ns |
 
-The sharded filter achieves **4.6x faster parallel writes** than AtomicFilter by distributing operations across shards (auto-tuned to GOMAXPROCS).
-
 ### Throughput
 
 | Implementation | Items/sec (8 goroutines) |
