@@ -7,12 +7,20 @@ default: lint test
 lint *ARGS="./...":
     golangci-lint run --timeout 5m {{ARGS}}
 
-# Runs the tests
+# Runs the tests (short)
 t *ARGS="./...":
+    go test -short -v -count=1 -covermode=atomic -coverprofile=test-coverage.out {{ARGS}}
+
+# Runs the tests with the race detector enabled (short)
+test *ARGS="./...":
+    just t -race {{ARGS}}
+
+# Runs the tests (long)
+t-long *ARGS="./...":
     go test -v -count=1 -covermode=atomic -coverprofile=test-coverage.out {{ARGS}}
 
-# Runs the tests with the race detector enabled
-test *ARGS="./...":
+# Runs the tests with the race detector enabled (long)
+test-long *ARGS="./...":
     just t -race {{ARGS}}
 
 # Runs benchmarks (in benchmarks/ submodule)

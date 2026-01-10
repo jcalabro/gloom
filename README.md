@@ -191,10 +191,13 @@ Benchmarks run on AMD Ryzen 9 9950X (32 threads), Go 1.23+, comparing against:
 
 ```bash
 # Using just https://github.com/casey/just
-just # runs the linter and tests with the race detector enabled
+just # runs the linter and short tests with the race detector enabled
 
 just test
 just t # runs without the race detector
+
+just test-long
+just t-long
 
 just bench
 just bench-long
