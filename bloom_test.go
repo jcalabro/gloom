@@ -1055,3 +1055,468 @@ func TestConcurrentNoFalseNegatives(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// Concurrent Stress Tests
+// =============================================================================
+
+// TestConcurrentStressAtomicFilter tests AtomicFilter under heavy concurrent load
+// with mixed reads and writes happening simultaneously.
+func TestConcurrentStressAtomicFilter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping stress test in short mode")
+	}
+
+	const (
+		numWriters     = 16
+		numReaders     = 16
+		itemsPerWriter = 50000
+		readsPerReader = 100000
+	)
+
+	f := NewAtomic(numWriters*itemsPerWriter, 0.01)
+	var wg sync.WaitGroup
+
+	// Track which items have been added (for verification)
+	added := make([][]bool, numWriters)
+	for i := range added {
+		added[i] = make([]bool, itemsPerWriter)
+	}
+
+	// Start writers
+	for w := range numWriters {
+		wg.Add(1)
+		go func(writerID int) {
+			defer wg.Done()
+			for i := range itemsPerWriter {
+				key := fmt.Appendf(nil, "stress-%d-%d", writerID, i)
+				f.Add(key)
+				added[writerID][i] = true
+			}
+		}(w)
+	}
+
+	// Start readers that continuously test random keys
+	for r := range numReaders {
+		wg.Add(1)
+		go func(readerID int) {
+			defer wg.Done()
+			for i := range readsPerReader {
+				// Test a key that might or might not exist
+				writerID := (readerID + i) % numWriters
+				itemID := i % itemsPerWriter
+				key := fmt.Appendf(nil, "stress-%d-%d", writerID, itemID)
+				_ = f.Test(key) // Just exercise the read path
+			}
+		}(r)
+	}
+
+	wg.Wait()
+
+	// Verify no false negatives for all added items
+	falseNegatives := 0
+	for w := range numWriters {
+		for i := range itemsPerWriter {
+			if added[w][i] {
+				key := fmt.Appendf(nil, "stress-%d-%d", w, i)
+				if !f.Test(key) {
+					falseNegatives++
+				}
+			}
+		}
+	}
+
+	if falseNegatives > 0 {
+		t.Errorf("found %d false negatives out of %d items", falseNegatives, numWriters*itemsPerWriter)
+	}
+
+	// Verify count is correct
+	expectedCount := uint64(numWriters * itemsPerWriter)
+	if f.Count() != expectedCount {
+		t.Errorf("expected count %d, got %d", expectedCount, f.Count())
+	}
+}
+
+// TestConcurrentStressShardedFilter tests ShardedAtomicFilter under heavy concurrent load.
+func TestConcurrentStressShardedFilter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping stress test in short mode")
+	}
+
+	const (
+		numWriters     = 32
+		numReaders     = 32
+		itemsPerWriter = 25000
+		readsPerReader = 50000
+	)
+
+	f := NewShardedAtomicDefault(numWriters*itemsPerWriter, 0.01)
+	var wg sync.WaitGroup
+
+	// Start writers and readers simultaneously
+	for w := range numWriters {
+		wg.Add(1)
+		go func(writerID int) {
+			defer wg.Done()
+			for i := range itemsPerWriter {
+				f.AddString(fmt.Sprintf("sharded-stress-%d-%d", writerID, i))
+			}
+		}(w)
+	}
+
+	for r := range numReaders {
+		wg.Add(1)
+		go func(readerID int) {
+			defer wg.Done()
+			for i := range readsPerReader {
+				writerID := (readerID + i) % numWriters
+				itemID := i % itemsPerWriter
+				_ = f.TestString(fmt.Sprintf("sharded-stress-%d-%d", writerID, itemID))
+			}
+		}(r)
+	}
+
+	wg.Wait()
+
+	// Verify no false negatives
+	falseNegatives := 0
+	for w := range numWriters {
+		for i := range itemsPerWriter {
+			if !f.TestString(fmt.Sprintf("sharded-stress-%d-%d", w, i)) {
+				falseNegatives++
+			}
+		}
+	}
+
+	if falseNegatives > 0 {
+		t.Errorf("found %d false negatives out of %d items", falseNegatives, numWriters*itemsPerWriter)
+	}
+}
+
+// TestConcurrentStressMethodMix tests calling various methods concurrently.
+func TestConcurrentStressMethodMix(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping stress test in short mode")
+	}
+
+	const (
+		numGoroutines = 32
+		opsPerRoutine = 10000
+	)
+
+	f := NewAtomic(numGoroutines*opsPerRoutine, 0.01)
+	var wg sync.WaitGroup
+
+	for g := range numGoroutines {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for i := range opsPerRoutine {
+				key := fmt.Sprintf("mix-%d-%d", id, i)
+
+				// Mix of operations
+				switch i % 5 {
+				case 0, 1, 2:
+					f.AddString(key)
+				case 3:
+					_ = f.TestString(key)
+				case 4:
+					_ = f.Count()
+					_ = f.EstimatedFillRatio()
+					_ = f.EstimatedFalsePositiveRate()
+				}
+			}
+		}(g)
+	}
+
+	wg.Wait()
+
+	// Basic sanity checks
+	if f.Count() == 0 {
+		t.Error("expected non-zero count")
+	}
+	ratio := f.EstimatedFillRatio()
+	if ratio < 0 || ratio > 1 {
+		t.Errorf("fill ratio out of bounds: %f", ratio)
+	}
+}
+
+// =============================================================================
+// Property-Based Tests
+// =============================================================================
+
+// TestPropertyNoFalseNegatives verifies the fundamental bloom filter property:
+// if an item was added, Test must return true.
+func TestPropertyNoFalseNegatives(t *testing.T) {
+	testCases := []struct {
+		name   string
+		items  int
+		fpRate float64
+	}{
+		{"small_filter", 100, 0.1},
+		{"medium_filter", 10000, 0.01},
+		{"large_filter", 100000, 0.001},
+		{"high_fp_rate", 1000, 0.5},
+		{"low_fp_rate", 1000, 0.0001},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := New(uint64(tc.items), tc.fpRate)
+
+			// Add items and immediately verify
+			for i := range tc.items {
+				key := fmt.Appendf(nil, "prop-%d", i)
+				f.Add(key)
+
+				// Property: immediately after Add, Test must return true
+				if !f.Test(key) {
+					t.Errorf("false negative immediately after adding item %d", i)
+				}
+			}
+
+			// Verify all items again after all adds complete
+			for i := range tc.items {
+				key := fmt.Appendf(nil, "prop-%d", i)
+				if !f.Test(key) {
+					t.Errorf("false negative for item %d after all adds", i)
+				}
+			}
+		})
+	}
+}
+
+// TestPropertyByteStringEquivalence verifies that byte slice and string
+// operations are equivalent.
+func TestPropertyByteStringEquivalence(t *testing.T) {
+	f := New(10000, 0.01)
+
+	testStrings := []string{
+		"hello",
+		"world",
+		"",
+		"a",
+		"longer string with spaces",
+		"unicode: 你好世界 🌍",
+		"\x00\x01\x02", // binary data
+	}
+
+	for _, s := range testStrings {
+		// Add via string, test via both
+		f.AddString(s)
+		if !f.TestString(s) {
+			t.Errorf("TestString failed after AddString for %q", s)
+		}
+		if !f.Test([]byte(s)) {
+			t.Errorf("Test([]byte) failed after AddString for %q", s)
+		}
+	}
+
+	f2 := New(10000, 0.01)
+	for _, s := range testStrings {
+		// Add via bytes, test via both
+		f2.Add([]byte(s))
+		if !f2.Test([]byte(s)) {
+			t.Errorf("Test failed after Add for %q", s)
+		}
+		if !f2.TestString(s) {
+			t.Errorf("TestString failed after Add for %q", s)
+		}
+	}
+}
+
+// TestPropertyIdempotence verifies that adding the same item multiple times
+// has the same effect as adding it once.
+func TestPropertyIdempotence(t *testing.T) {
+	f := New(1000, 0.01)
+
+	key := []byte("idempotent-key")
+
+	// Add once
+	f.Add(key)
+	countAfterFirst := f.Count()
+	if !f.Test(key) {
+		t.Error("Test failed after first add")
+	}
+
+	// Add same key many more times
+	for range 100 {
+		f.Add(key)
+	}
+
+	// Property: Test still returns true
+	if !f.Test(key) {
+		t.Error("Test failed after multiple adds of same key")
+	}
+
+	// Count increases (we're counting adds, not unique items)
+	if f.Count() != countAfterFirst+100 {
+		t.Errorf("expected count %d, got %d", countAfterFirst+100, f.Count())
+	}
+}
+
+// TestPropertyCountMonotonicity verifies that Count() never decreases.
+func TestPropertyCountMonotonicity(t *testing.T) {
+	f := New(10000, 0.01)
+
+	var lastCount uint64
+	for i := range 1000 {
+		f.Add(fmt.Appendf(nil, "mono-%d", i))
+		currentCount := f.Count()
+
+		if currentCount < lastCount {
+			t.Errorf("count decreased from %d to %d at iteration %d", lastCount, currentCount, i)
+		}
+		lastCount = currentCount
+	}
+}
+
+// TestPropertyFillRatioBounds verifies EstimatedFillRatio is always in [0, 1].
+func TestPropertyFillRatioBounds(t *testing.T) {
+	f := New(1000, 0.01)
+
+	// Empty filter
+	ratio := f.EstimatedFillRatio()
+	if ratio != 0 {
+		t.Errorf("empty filter should have 0 fill ratio, got %f", ratio)
+	}
+
+	// Add items and check bounds
+	for i := range 2000 { // Overfill
+		f.Add(fmt.Appendf(nil, "fill-%d", i))
+		ratio := f.EstimatedFillRatio()
+		if ratio < 0 || ratio > 1 {
+			t.Errorf("fill ratio out of bounds at iteration %d: %f", i, ratio)
+		}
+	}
+}
+
+// TestPropertyFPRateBounds verifies EstimatedFalsePositiveRate is always in [0, 1].
+func TestPropertyFPRateBounds(t *testing.T) {
+	f := New(1000, 0.01)
+
+	// Empty filter should have ~0 FP rate
+	fpRate := f.EstimatedFalsePositiveRate()
+	if fpRate != 0 {
+		t.Errorf("empty filter should have 0 FP rate, got %f", fpRate)
+	}
+
+	// Add items and check bounds
+	for i := range 2000 {
+		f.Add(fmt.Appendf(nil, "fp-%d", i))
+		fpRate := f.EstimatedFalsePositiveRate()
+		if fpRate < 0 || fpRate > 1 {
+			t.Errorf("FP rate out of bounds at iteration %d: %f", i, fpRate)
+		}
+	}
+}
+
+// TestPropertyFillRatioMonotonicity verifies fill ratio never decreases.
+func TestPropertyFillRatioMonotonicity(t *testing.T) {
+	f := New(10000, 0.01)
+
+	var lastRatio float64
+	for i := range 5000 {
+		f.Add(fmt.Appendf(nil, "ratio-%d", i))
+		ratio := f.EstimatedFillRatio()
+
+		if ratio < lastRatio {
+			t.Errorf("fill ratio decreased from %f to %f at iteration %d", lastRatio, ratio, i)
+		}
+		lastRatio = ratio
+	}
+}
+
+// TestPropertyAtomicFilterEquivalence verifies AtomicFilter behaves the same
+// as Filter for single-threaded operations.
+func TestPropertyAtomicFilterEquivalence(t *testing.T) {
+	f1 := New(10000, 0.01)
+	f2 := NewAtomic(10000, 0.01)
+
+	// Same parameters
+	if f1.Cap() != f2.Cap() {
+		t.Errorf("capacity mismatch: %d vs %d", f1.Cap(), f2.Cap())
+	}
+	if f1.K() != f2.K() {
+		t.Errorf("k mismatch: %d vs %d", f1.K(), f2.K())
+	}
+	if f1.NumBlocks() != f2.NumBlocks() {
+		t.Errorf("numBlocks mismatch: %d vs %d", f1.NumBlocks(), f2.NumBlocks())
+	}
+
+	// Add same items to both
+	for i := range 1000 {
+		key := fmt.Appendf(nil, "equiv-%d", i)
+		f1.Add(key)
+		f2.Add(key)
+	}
+
+	// Test same items - both should return true
+	for i := range 1000 {
+		key := fmt.Appendf(nil, "equiv-%d", i)
+		r1, r2 := f1.Test(key), f2.Test(key)
+		if r1 != r2 {
+			t.Errorf("result mismatch for item %d: Filter=%v, AtomicFilter=%v", i, r1, r2)
+		}
+		if !r1 {
+			t.Errorf("false negative for item %d", i)
+		}
+	}
+
+	// Counts should match
+	if f1.Count() != f2.Count() {
+		t.Errorf("count mismatch: %d vs %d", f1.Count(), f2.Count())
+	}
+}
+
+// TestPropertyShardedFilterEquivalence verifies ShardedAtomicFilter produces
+// correct results (no false negatives).
+func TestPropertyShardedFilterEquivalence(t *testing.T) {
+	shardCounts := []uint64{1, 2, 4, 8, 16, 32}
+
+	for _, numShards := range shardCounts {
+		t.Run(fmt.Sprintf("shards_%d", numShards), func(t *testing.T) {
+			f := NewShardedAtomic(10000, 0.01, numShards)
+
+			// Add items
+			for i := range 1000 {
+				f.AddString(fmt.Sprintf("shard-equiv-%d", i))
+			}
+
+			// Verify no false negatives
+			for i := range 1000 {
+				if !f.TestString(fmt.Sprintf("shard-equiv-%d", i)) {
+					t.Errorf("false negative for item %d with %d shards", i, numShards)
+				}
+			}
+
+			// Verify count
+			if f.Count() != 1000 {
+				t.Errorf("expected count 1000, got %d with %d shards", f.Count(), numShards)
+			}
+		})
+	}
+}
+
+// TestPropertyDifferentKValues verifies the filter works correctly with all
+// supported k values.
+func TestPropertyDifferentKValues(t *testing.T) {
+	for k := uint32(3); k <= 14; k++ {
+		t.Run(fmt.Sprintf("k_%d", k), func(t *testing.T) {
+			f := NewWithParams(100, k)
+
+			if f.K() != k {
+				t.Errorf("expected k=%d, got k=%d", k, f.K())
+			}
+
+			// Add and verify items
+			for i := range 500 {
+				key := fmt.Appendf(nil, "k%d-item-%d", k, i)
+				f.Add(key)
+				if !f.Test(key) {
+					t.Errorf("false negative for k=%d item %d", k, i)
+				}
+			}
+		})
+	}
+}
