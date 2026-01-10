@@ -6,7 +6,7 @@ issues:
 
 linters:
   enable:
-    modernize
+    - modernize
   settings:
     errcheck:
       check-type-assertions: true
