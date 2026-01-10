@@ -4,7 +4,7 @@ A high-performance bloom filter library for Go, implementing cache-line blocked 
 
 ## Features
 
-- **Cache-line optimized**: All k bit probes for a key fit within a single 64-byte cache line, minimizing memory access latency
+- **Cache-line optimized**: All k bit probes for a key fit within a single 64-byte cache line, minimizing memory access latency. Memory is explicitly 64-byte aligned for optimal CPU cache behavior.
 - **One-hashing technique**: Uses a single xxhash64 call with prime modulo partitions instead of k independent hash functions
 - **Three implementations**:
   - `Filter` - Non-thread-safe, fastest for single-threaded workloads

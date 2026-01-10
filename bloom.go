@@ -3,7 +3,11 @@ package gloom
 import (
 	"math/bits"
 	"sync/atomic"
+	"unsafe"
 )
+
+// cacheLineSize is the size of a CPU cache line in bytes.
+const cacheLineSize = 64
 
 // Filter is a non-thread-safe bloom filter using cache-line blocked
 // one-hashing for optimal performance.
@@ -13,7 +17,8 @@ import (
 // distinct prime sizes, enabling the one-hashing technique where a single
 // hash value generates k independent bit positions via modulo operations.
 type Filter struct {
-	blocks    []uint64 // 8 uint64s per block = 512 bits
+	raw       []byte   // Raw allocation to keep aligned memory alive for GC
+	blocks    []uint64 // 8 uint64s per block = 512 bits (cache-line aligned)
 	numBlocks uint64   // Total number of 512-bit blocks
 	k         uint32   // Number of hash functions (partitions)
 	primes    []uint32 // Prime partition sizes
@@ -42,13 +47,27 @@ func NewWithParams(numBlocks uint64, k uint32) *Filter {
 		primes = GetPrimePartition(k)
 	}
 
+	raw, blocks := makeAlignedUint64Slice(int(numBlocks * BlockWords))
+
 	return &Filter{
-		blocks:    make([]uint64, numBlocks*BlockWords),
+		raw:       raw,
+		blocks:    blocks,
 		numBlocks: numBlocks,
 		k:         k,
 		primes:    primes,
 		offsets:   ComputeOffsets(primes),
 	}
+}
+
+// makeAlignedUint64Slice allocates a cache-line aligned slice of uint64.
+// Returns the raw byte slice (to keep alive for GC) and the aligned uint64 slice.
+func makeAlignedUint64Slice(n int) ([]byte, []uint64) {
+	// Allocate with extra space for alignment
+	raw := make([]byte, n*8+cacheLineSize-1)
+	addr := uintptr(unsafe.Pointer(&raw[0]))
+	offset := (cacheLineSize - int(addr%cacheLineSize)) % cacheLineSize
+	aligned := unsafe.Slice((*uint64)(unsafe.Pointer(&raw[offset])), n)
+	return raw, aligned
 }
 
 // Add adds data to the bloom filter.
@@ -176,7 +195,8 @@ func (f *Filter) Clear() {
 // It uses the same cache-line blocked one-hashing technique as Filter
 // but with atomic.Uint64 for concurrent access.
 type AtomicFilter struct {
-	blocks    []atomic.Uint64 // 8 atomic uint64s per block = 512 bits
+	raw       []byte          // Raw allocation to keep aligned memory alive for GC
+	blocks    []atomic.Uint64 // 8 atomic uint64s per block = 512 bits (cache-line aligned)
 	numBlocks uint64          // Total number of 512-bit blocks
 	k         uint32          // Number of hash functions (partitions)
 	primes    []uint32        // Prime partition sizes
@@ -203,13 +223,29 @@ func NewAtomicWithParams(numBlocks uint64, k uint32) *AtomicFilter {
 		primes = GetPrimePartition(k)
 	}
 
+	raw, blocks := makeAlignedAtomicUint64Slice(int(numBlocks * BlockWords))
+
 	return &AtomicFilter{
-		blocks:    make([]atomic.Uint64, numBlocks*BlockWords),
+		raw:       raw,
+		blocks:    blocks,
 		numBlocks: numBlocks,
 		k:         k,
 		primes:    primes,
 		offsets:   ComputeOffsets(primes),
 	}
+}
+
+// makeAlignedAtomicUint64Slice allocates a cache-line aligned slice of atomic.Uint64.
+// Returns the raw byte slice (to keep alive for GC) and the aligned atomic slice.
+func makeAlignedAtomicUint64Slice(n int) ([]byte, []atomic.Uint64) {
+	// atomic.Uint64 is the same size as uint64 (8 bytes)
+	const atomicSize = 8
+	// Allocate with extra space for alignment
+	raw := make([]byte, n*atomicSize+cacheLineSize-1)
+	addr := uintptr(unsafe.Pointer(&raw[0]))
+	offset := (cacheLineSize - int(addr%cacheLineSize)) % cacheLineSize
+	aligned := unsafe.Slice((*atomic.Uint64)(unsafe.Pointer(&raw[offset])), n)
+	return raw, aligned
 }
 
 // Add adds data to the bloom filter atomically.

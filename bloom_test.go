@@ -5,7 +5,14 @@ import (
 	"math"
 	"sync"
 	"testing"
+	"unsafe"
 )
+
+// unsafePointer returns the unsafe.Pointer for a value.
+// Used in tests to verify cache-line alignment.
+func unsafePointer[T any](v *T) unsafe.Pointer {
+	return unsafe.Pointer(v)
+}
 
 func TestFilterBasic(t *testing.T) {
 	f := New(1000, 0.01)
@@ -747,5 +754,30 @@ func TestGetPrimePartitionInvalid(t *testing.T) {
 	}
 	if GetPrimePartition(15) != nil {
 		t.Error("expected nil for k=15")
+	}
+}
+
+func TestCacheLineAlignment(t *testing.T) {
+	// Test that Filter blocks are cache-line aligned
+	f := New(1000, 0.01)
+	addr := uintptr(unsafePointer(&f.blocks[0]))
+	if addr%64 != 0 {
+		t.Errorf("Filter blocks not 64-byte aligned: address %x", addr)
+	}
+
+	// Test that AtomicFilter blocks are cache-line aligned
+	af := NewAtomic(1000, 0.01)
+	addrAtomic := uintptr(unsafePointer(&af.blocks[0]))
+	if addrAtomic%64 != 0 {
+		t.Errorf("AtomicFilter blocks not 64-byte aligned: address %x", addrAtomic)
+	}
+
+	// Test that ShardedAtomicFilter shards are cache-line aligned
+	sf := NewShardedAtomic(1000, 0.01, 4)
+	for i, shard := range sf.shards {
+		addrShard := uintptr(unsafePointer(&shard.blocks[0]))
+		if addrShard%64 != 0 {
+			t.Errorf("ShardedAtomicFilter shard %d not 64-byte aligned: address %x", i, addrShard)
+		}
 	}
 }
