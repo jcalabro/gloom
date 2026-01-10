@@ -18,7 +18,9 @@ A high-performance bloom filter library for Go, implementing cache-line blocked 
 
 ## Usage
 
-### Basic Usage
+### Single-Threaded Usage
+
+Requires the caller to synchronize parallel reads and writes, if any.
 
 ```go
 package main
@@ -185,10 +187,15 @@ The sharded filter achieves **4.6x faster parallel writes** than AtomicFilter by
 | Gloom Atomic | 19.4M items/sec |
 | **Gloom Sharded** | **78.6M items/sec** |
 
-### Running Benchmarks
+### Running Tests and Benchmarks
 
 ```bash
-# Using just
+# Using just https://github.com/casey/just
+just # runs the linter and tests with the race detector enabled
+
+just test
+just t # runs without the race detector
+
 just bench
 just bench-long
 ```
@@ -196,40 +203,6 @@ just bench-long
 ### Tips
 
 For maximum performance on modern x86-64 CPUs, ensure you're building with [GOAMD64=v2](https://go.dev/wiki/MinimumRequirements#microarchitecture-support) or above. This enables hardware POPCNT instructions (used for fill ratio estimation) without runtime CPU detection overhead. Ensure your CPU supports `popcnt` first.
-
-## API Reference
-
-### Filter (Non-Thread-Safe)
-
-```go
-func New(expectedItems uint64, fpRate float64) *Filter
-func NewWithParams(numBlocks uint64, k uint32) *Filter
-
-func (f *Filter) Add(data []byte)
-func (f *Filter) AddString(s string)
-func (f *Filter) Test(data []byte) bool
-func (f *Filter) TestString(s string) bool
-func (f *Filter) Cap() uint64                      // Capacity in bits
-func (f *Filter) K() uint32                        // Number of hash functions
-func (f *Filter) Count() uint64                    // Items added
-func (f *Filter) NumBlocks() uint64                // Number of 512-bit blocks
-func (f *Filter) EstimatedFillRatio() float64      // Proportion of bits set
-func (f *Filter) EstimatedFalsePositiveRate() float64
-```
-
-### AtomicFilter (Thread-Safe)
-
-Same API as `Filter`, safe for concurrent use. Uses `atomic.Uint64.Or()` for lock-free bit setting.
-
-### ShardedAtomicFilter (Thread-Safe, High Write Throughput)
-
-Same API as `Filter`, safe for concurrent use. Distributes keys across N independent `AtomicFilter` shards to reduce write contention. Use when you have highly parallel write throughput requirements.
-
-Also has this additional method:
-
-```go
-func (f *ShardedAtomicFilter) NumBlocks() uint64
-```
 
 ## License
 
