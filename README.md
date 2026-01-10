@@ -6,7 +6,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/jcalabro/gloom)](https://goreportcard.com/report/github.com/jcalabro/gloom)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A high-performance bloom filter library for Go, implementing cache-line blocked one-hashing for optimal throughput.
+A high-performance bloom filter library for Go, implementing cache-line blocked one-hashing (OHBF).
 
 ## Features
 
@@ -131,28 +131,67 @@ fmt.Printf("Est. FP rate: %.4f%%\n", f.EstimatedFalsePositiveRate()*100)
 Traditional bloom filters use k independent hash functions, each potentially accessing a different cache line. Gloom instead:
 
 1. **Blocks memory into 512-bit (64-byte) chunks** matching CPU cache line size
-2. **Uses one xxhash64 call** per operation - upper 32 bits select the block, lower 32 bits are reused
+2. **Uses one xxh3 call** per operation - upper 32 bits select the block, lower 32 bits are reused
 3. **Partitions each block by k primes** - the same hash value mod different primes gives k independent bit positions
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Bloom Filter Memory                       │
-├──────────┬──────────┬──────────┬──────────┬────────────────┤
-│ Block 0  │ Block 1  │ Block 2  │ Block 3  │ ...            │
-│ 512 bits │ 512 bits │ 512 bits │ 512 bits │                │
-└──────────┴──────────┴──────────┴──────────┴────────────────┘
-
-Within each block (k=7 example):
-┌─────┬─────┬─────┬─────┬─────┬─────┬─────┐
-│ p=67│ p=71│ p=73│ p=79│ p=83│ p=89│ p=50│  (sum=512)
-└─────┴─────┴─────┴─────┴─────┴─────┴─────┘
+┌───────────────────────────────────┐
+│          Key: "hello"             │
+└─────────────────┬─────────────────┘
+                  │
+                  ▼
+┌───────────────────────────────────┐
+│         xxh3.Hash(key)            │
+│    h = 0xA1B2C3D4_E5F67890        │
+└─────────────────┬─────────────────┘
+                  │
+    ┌─────────────┴─────────────┐
+    │                           │
+    ▼                           ▼
+┌─────────────────┐   ┌─────────────────┐
+│  Block Index    │   │  Intra-Hash     │
+│  h >> 32        │   │  uint32(h)      │
+│  % numBlocks    │   │  = 0xE5F67890   │
+│  = Block 2      │   │                 │
+└────────┬────────┘   └────────┬────────┘
+         │                     │
+         └──────────┬──────────┘
+                    ▼
+┌───────────────────────────────────────────────────────────────────┐
+│                      Bloom Filter Memory                          │
+│ ┌─────────┬─────────┬─────────┬─────────┬─────────┬─────────────┐ │
+│ │ Block 0 │ Block 1 │ Block 2 │ Block 3 │ Block 4 │ ...         │ │
+│ │ 512 bits│ 512 bits│ 512 bits│ 512 bits│ 512 bits│             │ │
+│ └─────────┴─────────┴────┬────┴─────────┴─────────┴─────────────┘ │
+│                          │                                        │
+│              ┌───────────┴───────────┐                            │
+│              ▼   ONE cache line (64B)▼                            │
+│ ┌────────────────────────────────────────────────────────────┐    │
+│ │                    Block 2 (512 bits)                      │    │
+│ │ ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┐         │    │
+│ │ │ 67   │ 71   │ 73   │ 79   │ 83   │ 89   │ 50   │ ← prime │    │
+│ │ │ bits │ bits │ bits │ bits │ bits │ bits │ bits │   sizes │    │
+│ │ └──┬───┴──┬───┴──┬───┴──┬───┴──┬───┴──┬───┴──┬───┘         │    │
+│ │    │      │      │      │      │      │                    │    │
+│ │    ▼      ▼      ▼      ▼      ▼      ▼      ▼             │    │
+│ │  h%67   h%71   h%73   h%79   h%83   h%89   h%50            │    │
+│ │  =23    =45    =12    =67    =34    =78    =40             │    │
+│ │    │      │      │      │      │      │      │             │    │
+│ │    ▼      ▼      ▼      ▼      ▼      ▼      ▼             │    │
+│ │  SET    SET    SET    SET    SET    SET    SET             │    │
+│ │ bit 23 bit 112 bit 185 bit 264 bit 347 bit 436 bit 486     │    │
+│ └────────────────────────────────────────────────────────────┘    │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 ### References
 
+- [Space/Time Trade-offs in Hash Coding with Allowable Errors](https://dl.acm.org/doi/10.1145/362686.362692) - Original bloom filter paper (Bloom, 1970)
+- [Network Applications of Bloom Filters: A Survey](https://www.eecs.harvard.edu/~michaelm/postscripts/im2005b.pdf) - Comprehensive survey (Broder & Mitzenmacher, 2004)
 - [One-Hashing Bloom Filter](https://yangtonghome.github.io/uploads/One_Hashing.pdf) - Prime partition technique
-- [RocksDB Bloom Filter](https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter) - Cache-line blocking
-- [Less Hashing, Same Performance](https://www.eecs.harvard.edu/~michaelm/postscripts/rsa2008.pdf) - Double hashing theory
+- [Less Hashing, Same Performance](https://www.eecs.harvard.edu/~michaelm/postscripts/rsa2008.pdf) - Double hashing theory (Kirsch & Mitzenmacher, 2006)
+- [RocksDB Bloom Filter](https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter) - Cache-line blocking implementation
+- [xxHash](https://github.com/Cyan4973/xxHash) - Extremely fast hash algorithm (used via [zeebo/xxh3](https://github.com/zeebo/xxh3))
 
 ## Benchmarks
 
