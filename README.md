@@ -1,6 +1,9 @@
 # Gloom
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/jcalabro/gloom.svg)](https://pkg.go.dev/github.com/jcalabro/gloom)
+[![CI](https://github.com/jcalabro/gloom/actions/workflows/ci.yaml/badge.svg)](https://github.com/jcalabro/gloom/actions/workflows/ci.yaml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go Report Card](https://goreportcard.com/badge/github.com/jcalabro/gloom)](https://goreportcard.com/report/github.com/jcalabro/gloom)
 
 A high-performance bloom filter library for Go, implementing cache-line blocked one-hashing for optimal throughput.
 
