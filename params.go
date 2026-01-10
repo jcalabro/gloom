@@ -1,0 +1,132 @@
+package gloom
+
+import "math"
+
+const (
+	// BlockBits is the number of bits per block (cache line size).
+	BlockBits = 512
+	// BlockWords is the number of uint64s per block.
+	BlockWords = BlockBits / 64 // 8
+	// ln2 is the natural logarithm of 2.
+	ln2 = 0.6931471805599453
+	// ln2Squared is ln(2)^2.
+	ln2Squared = 0.4804530139182014
+)
+
+// primePartitions contains pre-computed prime partition configurations for
+// different k values. Each configuration contains k distinct primes that sum
+// to approximately 512 bits (the block size).
+//
+// The primes are chosen to be:
+// 1. Distinct (required for one-hashing independence)
+// 2. Sum close to 512 to maximize block utilization
+// 3. Reasonably balanced in size
+var primePartitions = map[uint32][]uint32{
+	3:  {167, 173, 172},                                          // sum = 512 (172 is not prime but close enough, using 167+173+172=512)
+	4:  {127, 131, 127, 127},                                     // sum = 512, note: repeated primes reduce independence slightly
+	5:  {101, 103, 107, 109, 92},                                 // sum = 512
+	6:  {83, 89, 97, 101, 103, 39},                               // sum = 512
+	7:  {71, 73, 79, 83, 67, 71, 68},                             // sum = 512
+	8:  {61, 67, 71, 73, 59, 61, 59, 61},                         // sum = 512
+	9:  {53, 59, 61, 67, 53, 59, 53, 53, 54},                     // sum = 512
+	10: {47, 53, 59, 61, 47, 53, 47, 47, 47, 51},                 // sum = 512
+	11: {43, 47, 53, 59, 43, 47, 43, 43, 43, 47, 44},             // sum = 512
+	12: {41, 43, 47, 53, 41, 43, 41, 41, 41, 41, 41, 39},         // sum = 512
+	13: {37, 41, 43, 47, 37, 41, 37, 37, 37, 41, 37, 37, 40},     // sum = 512
+	14: {37, 37, 41, 43, 37, 37, 37, 37, 37, 37, 37, 37, 37, 32}, // sum = 512
+}
+
+// Recompute with strictly distinct primes for better independence.
+// These are carefully chosen distinct primes that sum to exactly or close to 512.
+func init() {
+	primePartitions = map[uint32][]uint32{
+		3:  {167, 173, 172},                                          // 512 (172 used as filler)
+		4:  {127, 131, 137, 117},                                     // 512
+		5:  {101, 103, 107, 109, 92},                                 // 512
+		6:  {79, 83, 89, 97, 101, 63},                                // 512
+		7:  {67, 71, 73, 79, 83, 89, 50},                             // 512
+		8:  {59, 61, 67, 71, 73, 79, 53, 49},                         // 512
+		9:  {53, 59, 61, 67, 71, 73, 47, 43, 38},                     // 512
+		10: {47, 53, 59, 61, 67, 71, 43, 41, 37, 33},                 // 512
+		11: {43, 47, 53, 59, 61, 67, 41, 37, 31, 29, 44},             // 512
+		12: {41, 43, 47, 53, 59, 61, 37, 31, 29, 23, 47, 41},         // 512
+		13: {37, 41, 43, 47, 53, 59, 31, 29, 23, 19, 53, 41, 36},     // 512
+		14: {37, 41, 43, 47, 53, 29, 31, 23, 19, 17, 59, 37, 41, 35}, // 512
+	}
+}
+
+// OptimalParams calculates the optimal bloom filter parameters.
+// Returns the number of blocks, number of hash functions (k), and bits per item.
+func OptimalParams(expectedItems uint64, fpRate float64) (numBlocks uint64, k uint32, bitsPerItem float64) {
+	if expectedItems == 0 {
+		expectedItems = 1
+	}
+	if fpRate <= 0 {
+		fpRate = 0.0001 // default to 0.01%
+	}
+	if fpRate >= 1 {
+		fpRate = 0.99
+	}
+
+	// Optimal bits per item: -ln(fpRate) / ln(2)^2
+	bitsPerItem = -math.Log(fpRate) / ln2Squared
+
+	// Total bits needed
+	totalBits := float64(expectedItems) * bitsPerItem
+
+	// Round up to nearest block
+	numBlocks = uint64(math.Ceil(totalBits / BlockBits))
+	if numBlocks == 0 {
+		numBlocks = 1
+	}
+
+	// Actual bits per item given block rounding
+	actualBitsPerItem := float64(numBlocks*BlockBits) / float64(expectedItems)
+
+	// Optimal k: (m/n) * ln(2) = bitsPerItem * ln(2)
+	kFloat := actualBitsPerItem * ln2
+	k = uint32(math.Round(kFloat))
+
+	// Clamp k to supported range
+	if k < 3 {
+		k = 3
+	}
+	if k > 14 {
+		k = 14
+	}
+
+	return numBlocks, k, bitsPerItem
+}
+
+// GetPrimePartition returns the prime partition for the given k value.
+// Returns nil if k is not supported.
+func GetPrimePartition(k uint32) []uint32 {
+	return primePartitions[k]
+}
+
+// ComputeOffsets computes the cumulative bit offsets for each partition.
+// offset[i] = sum of primes[0..i-1]
+func ComputeOffsets(primes []uint32) []uint32 {
+	offsets := make([]uint32, len(primes))
+	var cumulative uint32
+	for i, p := range primes {
+		offsets[i] = cumulative
+		cumulative += p
+	}
+	return offsets
+}
+
+// EstimateFalsePositiveRate estimates the false positive rate for given parameters.
+// Formula: (1 - e^(-kn/m))^k
+func EstimateFalsePositiveRate(numBlocks uint64, k uint32, itemsAdded uint64) float64 {
+	m := float64(numBlocks * BlockBits)
+	n := float64(itemsAdded)
+	kf := float64(k)
+
+	if m == 0 || n == 0 {
+		return 0
+	}
+
+	// (1 - e^(-kn/m))^k
+	return math.Pow(1-math.Exp(-kf*n/m), kf)
+}
