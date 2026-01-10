@@ -781,3 +781,397 @@ func TestCacheLineAlignment(t *testing.T) {
 		}
 	}
 }
+
+// =============================================================================
+// Fuzz Tests - No False Negatives Property
+// =============================================================================
+//
+// These fuzz tests verify the fundamental bloom filter invariant: if an item
+// has been added to the filter, Test() must return true. A false negative
+// would indicate a serious bug in the implementation.
+//
+// Run with: go test -fuzz=FuzzFilter -fuzztime=30s
+
+func FuzzFilterNoFalseNegatives(f *testing.F) {
+	// Seed corpus with various byte patterns
+	f.Add([]byte("hello"))
+	f.Add([]byte(""))
+	f.Add([]byte{0x00})
+	f.Add([]byte{0xFF, 0xFF, 0xFF, 0xFF})
+	f.Add([]byte("a]0b\x00c\xffd"))
+
+	filter := New(10000, 0.01)
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		filter.Add(data)
+		if !filter.Test(data) {
+			t.Errorf("false negative: added %q but Test returned false", data)
+		}
+	})
+}
+
+func FuzzAtomicFilterNoFalseNegatives(f *testing.F) {
+	f.Add([]byte("hello"))
+	f.Add([]byte(""))
+	f.Add([]byte{0x00})
+	f.Add([]byte{0xFF, 0xFF, 0xFF, 0xFF})
+	f.Add([]byte("a\x00b\xffc"))
+
+	filter := NewAtomic(10000, 0.01)
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		filter.Add(data)
+		if !filter.Test(data) {
+			t.Errorf("false negative: added %q but Test returned false", data)
+		}
+	})
+}
+
+func FuzzShardedAtomicFilterNoFalseNegatives(f *testing.F) {
+	f.Add([]byte("hello"))
+	f.Add([]byte(""))
+	f.Add([]byte{0x00})
+	f.Add([]byte{0xFF, 0xFF, 0xFF, 0xFF})
+	f.Add([]byte("a\x00b\xffc"))
+
+	filter := NewShardedAtomic(10000, 0.01, 16)
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		filter.Add(data)
+		if !filter.Test(data) {
+			t.Errorf("false negative: added %q but Test returned false", data)
+		}
+	})
+}
+
+// FuzzFilterStringNoFalseNegatives tests the string variants
+func FuzzFilterStringNoFalseNegatives(f *testing.F) {
+	f.Add("hello")
+	f.Add("")
+	f.Add("a\x00b\xffc")
+	f.Add("unicode: \u0000\u0001\u00ff")
+
+	filter := New(10000, 0.01)
+
+	f.Fuzz(func(t *testing.T, data string) {
+		filter.AddString(data)
+		if !filter.TestString(data) {
+			t.Errorf("false negative: added %q but TestString returned false", data)
+		}
+	})
+}
+
+// =============================================================================
+// Statistical Tests - False Positive Rate Bounds
+// =============================================================================
+//
+// These tests verify that the observed false positive rate is within
+// statistically expected bounds at various load factors. We use a confidence
+// interval approach: the observed rate should be within ~3 standard deviations
+// of the expected rate (99.7% confidence).
+
+func TestFalsePositiveRateUnderLoad(t *testing.T) {
+	testCases := []struct {
+		name       string
+		capacity   uint64
+		targetFP   float64
+		loadFactor float64 // fraction of capacity to fill
+	}{
+		{"10% load", 10000, 0.01, 0.10},
+		{"50% load", 10000, 0.01, 0.50},
+		{"100% load", 10000, 0.01, 1.00},
+		{"150% load (overfilled)", 10000, 0.01, 1.50},
+		{"low FP rate", 10000, 0.001, 1.00},
+		{"high FP rate", 10000, 0.05, 1.00},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Run("Filter", func(t *testing.T) {
+				testFilterFPRate(t, tc.capacity, tc.targetFP, tc.loadFactor)
+			})
+			t.Run("AtomicFilter", func(t *testing.T) {
+				testAtomicFilterFPRate(t, tc.capacity, tc.targetFP, tc.loadFactor)
+			})
+			t.Run("ShardedAtomicFilter", func(t *testing.T) {
+				testShardedAtomicFilterFPRate(t, tc.capacity, tc.targetFP, tc.loadFactor)
+			})
+		})
+	}
+}
+
+func testFilterFPRate(t *testing.T, capacity uint64, targetFP, loadFactor float64) {
+	f := New(capacity, targetFP)
+	itemsToAdd := uint64(float64(capacity) * loadFactor)
+
+	// Add items
+	for i := range itemsToAdd {
+		f.Add(fmt.Appendf(nil, "item-%d", i))
+	}
+
+	// Verify no false negatives
+	for i := range itemsToAdd {
+		if !f.Test(fmt.Appendf(nil, "item-%d", i)) {
+			t.Fatalf("false negative at item %d", i)
+		}
+	}
+
+	// Measure false positive rate with items NOT in the filter
+	testItems := uint64(10000)
+	var falsePositives uint64
+	for i := range testItems {
+		if f.Test(fmt.Appendf(nil, "notitem-%d", i)) {
+			falsePositives++
+		}
+	}
+
+	observedFP := float64(falsePositives) / float64(testItems)
+	validateFPRate(t, observedFP, targetFP, loadFactor, testItems)
+}
+
+func testAtomicFilterFPRate(t *testing.T, capacity uint64, targetFP, loadFactor float64) {
+	f := NewAtomic(capacity, targetFP)
+	itemsToAdd := uint64(float64(capacity) * loadFactor)
+
+	for i := range itemsToAdd {
+		f.Add(fmt.Appendf(nil, "item-%d", i))
+	}
+
+	for i := range itemsToAdd {
+		if !f.Test(fmt.Appendf(nil, "item-%d", i)) {
+			t.Fatalf("false negative at item %d", i)
+		}
+	}
+
+	testItems := uint64(10000)
+	var falsePositives uint64
+	for i := range testItems {
+		if f.Test(fmt.Appendf(nil, "notitem-%d", i)) {
+			falsePositives++
+		}
+	}
+
+	observedFP := float64(falsePositives) / float64(testItems)
+	validateFPRate(t, observedFP, targetFP, loadFactor, testItems)
+}
+
+func testShardedAtomicFilterFPRate(t *testing.T, capacity uint64, targetFP, loadFactor float64) {
+	f := NewShardedAtomic(capacity, targetFP, 16)
+	itemsToAdd := uint64(float64(capacity) * loadFactor)
+
+	for i := range itemsToAdd {
+		f.Add(fmt.Appendf(nil, "item-%d", i))
+	}
+
+	for i := range itemsToAdd {
+		if !f.Test(fmt.Appendf(nil, "item-%d", i)) {
+			t.Fatalf("false negative at item %d", i)
+		}
+	}
+
+	testItems := uint64(10000)
+	var falsePositives uint64
+	for i := range testItems {
+		if f.Test(fmt.Appendf(nil, "notitem-%d", i)) {
+			falsePositives++
+		}
+	}
+
+	observedFP := float64(falsePositives) / float64(testItems)
+	validateFPRate(t, observedFP, targetFP, loadFactor, testItems)
+}
+
+// validateFPRate checks if observed FP rate is within statistical bounds
+func validateFPRate(t *testing.T, observedFP, targetFP, loadFactor float64, testItems uint64) {
+	t.Helper()
+
+	// The target FP rate is calibrated for 100% load. At different load levels,
+	// we need to estimate the expected FP rate using the bloom filter formula:
+	// FP ≈ (1 - e^(-k*n/m))^k
+	//
+	// Since we don't have direct access to k, m here, we use an approximation:
+	// At load factor L, the expected FP rate scales roughly as targetFP^(1/L) for L<1
+	// and targetFP*L^2 for L>1
+
+	var expectedFP float64
+	switch {
+	case loadFactor <= 0.1:
+		// At very low load, FP rate is essentially 0
+		expectedFP = 0.0
+	case loadFactor < 1.0:
+		// FP rate scales roughly with fill ratio raised to power k
+		// Since k is typically 7-10, and fill ratio ~ loadFactor,
+		// FP ≈ targetFP * loadFactor^k ≈ targetFP * loadFactor^7
+		expectedFP = targetFP * math.Pow(loadFactor, 7)
+	case loadFactor == 1.0:
+		expectedFP = targetFP
+	default:
+		// When overfilled, FP rate increases as more bits get set
+		expectedFP = math.Min(1.0, targetFP*loadFactor*loadFactor)
+	}
+
+	// Calculate confidence interval using normal approximation to binomial
+	// Standard deviation of sample proportion: sqrt(p*(1-p)/n)
+	// Use a reasonable estimate for p in variance calculation
+	pForVariance := math.Max(expectedFP, 0.001) // Avoid division issues at very low rates
+	stdDev := math.Sqrt(pForVariance * (1 - pForVariance) / float64(testItems))
+
+	// Use 4 standard deviations for 99.99% confidence
+	margin := 4 * stdDev
+
+	// For very low expected FP rates, use a minimum margin based on sample size
+	// With 10000 samples, we might see 0-2 false positives by chance
+	minMargin := 3.0 / float64(testItems) // Allow up to 3 FPs on low-rate tests
+	if margin < minMargin {
+		margin = minMargin
+	}
+
+	// Be more generous with the margin for non-100% load tests
+	if loadFactor != 1.0 {
+		margin = math.Max(margin, targetFP*0.5) // Allow 50% relative error
+	}
+
+	lowerBound := math.Max(0, expectedFP-margin)
+	upperBound := expectedFP + margin
+
+	t.Logf("load=%.0f%% observed=%.4f expected=%.4f bounds=[%.4f, %.4f]",
+		loadFactor*100, observedFP, expectedFP, lowerBound, upperBound)
+
+	// For overfilled case, we only check upper bound isn't absurdly high
+	if loadFactor > 1.0 {
+		if observedFP > 0.5 && loadFactor < 2.0 {
+			t.Errorf("FP rate too high for load factor: observed %.4f at %.0f%% load",
+				observedFP, loadFactor*100)
+		}
+		return
+	}
+
+	if observedFP < lowerBound || observedFP > upperBound {
+		t.Errorf("FP rate outside expected bounds: observed %.4f, expected %.4f +/- %.4f",
+			observedFP, expectedFP, margin)
+	}
+}
+
+// TestNoFalseNegativesUnderStress tests that false negatives never occur
+// even under heavy load with many items
+func TestNoFalseNegativesUnderStress(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping stress test in short mode")
+	}
+
+	testCases := []struct {
+		name     string
+		items    uint64
+		fpRate   float64
+		sharded  bool
+		numTests int
+	}{
+		{"Filter 100k items", 100000, 0.01, false, 3},
+		{"AtomicFilter 100k items", 100000, 0.01, false, 3},
+		{"ShardedAtomicFilter 100k items", 100000, 0.01, true, 3},
+		{"Filter 1M items", 1000000, 0.01, false, 1},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			for test := range tc.numTests {
+				var addFunc func([]byte)
+				var testFunc func([]byte) bool
+
+				if tc.sharded {
+					f := NewShardedAtomic(tc.items, tc.fpRate, 16)
+					addFunc = f.Add
+					testFunc = f.Test
+				} else if tc.name[0] == 'A' { // AtomicFilter
+					f := NewAtomic(tc.items, tc.fpRate)
+					addFunc = f.Add
+					testFunc = f.Test
+				} else {
+					f := New(tc.items, tc.fpRate)
+					addFunc = f.Add
+					testFunc = f.Test
+				}
+
+				// Add all items
+				for i := range tc.items {
+					addFunc(fmt.Appendf(nil, "stress-test-%d-%d", test, i))
+				}
+
+				// Verify all items are found (no false negatives)
+				var falseNegatives uint64
+				for i := range tc.items {
+					if !testFunc(fmt.Appendf(nil, "stress-test-%d-%d", test, i)) {
+						falseNegatives++
+						if falseNegatives <= 10 {
+							t.Errorf("false negative at item %d", i)
+						}
+					}
+				}
+
+				if falseNegatives > 0 {
+					t.Fatalf("total false negatives: %d out of %d items", falseNegatives, tc.items)
+				}
+			}
+		})
+	}
+}
+
+// TestConcurrentNoFalseNegatives verifies no false negatives under concurrent access
+func TestConcurrentNoFalseNegatives(t *testing.T) {
+	const (
+		numGoroutines = 8
+		itemsPerGo    = 10000
+	)
+
+	t.Run("AtomicFilter", func(t *testing.T) {
+		f := NewAtomic(numGoroutines*itemsPerGo, 0.01)
+		var wg sync.WaitGroup
+
+		// Concurrently add items
+		for g := range numGoroutines {
+			wg.Add(1)
+			go func(goroutineID int) {
+				defer wg.Done()
+				for i := range itemsPerGo {
+					f.Add(fmt.Appendf(nil, "concurrent-%d-%d", goroutineID, i))
+				}
+			}(g)
+		}
+		wg.Wait()
+
+		// Verify all items (single-threaded verification is fine)
+		for g := range numGoroutines {
+			for i := range itemsPerGo {
+				key := fmt.Appendf(nil, "concurrent-%d-%d", g, i)
+				if !f.Test(key) {
+					t.Errorf("false negative for goroutine %d item %d", g, i)
+				}
+			}
+		}
+	})
+
+	t.Run("ShardedAtomicFilter", func(t *testing.T) {
+		f := NewShardedAtomic(numGoroutines*itemsPerGo, 0.01, 16)
+		var wg sync.WaitGroup
+
+		for g := range numGoroutines {
+			wg.Add(1)
+			go func(goroutineID int) {
+				defer wg.Done()
+				for i := range itemsPerGo {
+					f.Add(fmt.Appendf(nil, "concurrent-%d-%d", goroutineID, i))
+				}
+			}(g)
+		}
+		wg.Wait()
+
+		for g := range numGoroutines {
+			for i := range itemsPerGo {
+				key := fmt.Appendf(nil, "concurrent-%d-%d", g, i)
+				if !f.Test(key) {
+					t.Errorf("false negative for goroutine %d item %d", g, i)
+				}
+			}
+		}
+	})
+}
