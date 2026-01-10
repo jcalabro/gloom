@@ -108,30 +108,6 @@ func Example_sharded() {
 	// Total items: 80000
 }
 
-// This example demonstrates TestAndAdd for deduplication workflows.
-func Example_deduplication() {
-	f := gloom.New(10_000, 0.01)
-
-	items := []string{"apple", "banana", "apple", "cherry", "banana", "apple"}
-
-	unique := 0
-	for _, item := range items {
-		// TestAndAdd returns true if item was (probably) already present
-		if !f.TestAndAddString(item) {
-			unique++
-			fmt.Println("New item:", item)
-		}
-	}
-
-	fmt.Println("Unique items:", unique)
-
-	// Output:
-	// New item: apple
-	// New item: banana
-	// New item: cherry
-	// Unique items: 3
-}
-
 // This example shows how to monitor filter statistics.
 func Example_statistics() {
 	f := gloom.New(10_000, 0.01)
@@ -167,29 +143,6 @@ func Example_customParameters() {
 	// Output:
 	// Contains 'custom': true
 	// Blocks: 1000, K: 7
-}
-
-// This example shows how to clear and reuse a filter.
-func Example_clear() {
-	f := gloom.New(1000, 0.01)
-
-	// First batch
-	f.AddString("batch1-item1")
-	f.AddString("batch1-item2")
-	fmt.Println("After batch 1:", f.Count(), "items")
-
-	// Clear for reuse (more efficient than creating a new filter)
-	f.Clear()
-	fmt.Println("After clear:", f.Count(), "items")
-
-	// Second batch
-	f.AddString("batch2-item1")
-	fmt.Println("After batch 2:", f.Count(), "items")
-
-	// Output:
-	// After batch 1: 2 items
-	// After clear: 0 items
-	// After batch 2: 1 items
 }
 
 func ExampleNew() {
@@ -251,21 +204,6 @@ func ExampleNewShardedAtomicDefault() {
 
 	// Output:
 	// Has key: true
-}
-
-func ExampleFilter_TestAndAdd() {
-	f := gloom.New(1000, 0.01)
-
-	// TestAndAdd returns true if item was probably already present
-	wasPresent := f.TestAndAddString("first-time")
-	fmt.Println("First add, was present:", wasPresent)
-
-	wasPresent = f.TestAndAddString("first-time")
-	fmt.Println("Second add, was present:", wasPresent)
-
-	// Output:
-	// First add, was present: false
-	// Second add, was present: true
 }
 
 func ExampleOptimalParams() {

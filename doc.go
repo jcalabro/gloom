@@ -82,10 +82,6 @@
 // [AtomicFilter] and [ShardedAtomicFilter] are safe for concurrent Add and
 // Test operations.
 //
-// The [AtomicFilter.TestAndAdd] method is NOT a single atomic operation –
-// there is a race window between the test and add. Use it for best-effort
-// deduplication, not strict mutual exclusion.
-//
 // # Performance Tips
 //
 //   - Use [Filter] for single-threaded workloads (fastest)

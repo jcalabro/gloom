@@ -68,38 +68,6 @@ func TestFilterFalsePositiveRate(t *testing.T) {
 	t.Logf("FP rate: %.4f (target: %.4f, k=%d, blocks=%d)", actualFPRate, targetFPRate, f.K(), f.NumBlocks())
 }
 
-func TestFilterTestAndAdd(t *testing.T) {
-	f := New(1000, 0.01)
-
-	// First add should return false (not present before)
-	if f.TestAndAdd([]byte("test")) {
-		t.Error("expected TestAndAdd to return false for new item")
-	}
-
-	// Second add should return true (was present)
-	if !f.TestAndAdd([]byte("test")) {
-		t.Error("expected TestAndAdd to return true for existing item")
-	}
-}
-
-func TestFilterClear(t *testing.T) {
-	f := New(100, 0.01)
-
-	f.Add([]byte("test"))
-	if !f.Test([]byte("test")) {
-		t.Error("expected test to be present before clear")
-	}
-
-	f.Clear()
-
-	if f.Test([]byte("test")) {
-		t.Error("expected test to not be present after clear")
-	}
-	if f.Count() != 0 {
-		t.Errorf("expected count to be 0 after clear, got %d", f.Count())
-	}
-}
-
 func TestFilterEstimatedFillRatio(t *testing.T) {
 	f := New(1000, 0.01)
 
@@ -383,20 +351,6 @@ func TestShardedAtomicFilterConcurrent(t *testing.T) {
 	}
 }
 
-func TestShardedAtomicFilterTestAndAdd(t *testing.T) {
-	f := NewShardedAtomicDefault(1000, 0.01)
-
-	// First add should return false (not present before)
-	if f.TestAndAdd([]byte("test")) {
-		t.Error("expected TestAndAdd to return false for new item")
-	}
-
-	// Second add should return true (was present)
-	if !f.TestAndAdd([]byte("test")) {
-		t.Error("expected TestAndAdd to return true for existing item")
-	}
-}
-
 func TestNextPowerOf2(t *testing.T) {
 	tests := []struct {
 		input    uint64
@@ -426,17 +380,6 @@ func TestNextPowerOf2(t *testing.T) {
 
 // Additional coverage tests
 
-func TestFilterTestAndAddString(t *testing.T) {
-	f := New(1000, 0.01)
-
-	if f.TestAndAddString("test") {
-		t.Error("expected TestAndAddString to return false for new item")
-	}
-	if !f.TestAndAddString("test") {
-		t.Error("expected TestAndAddString to return true for existing item")
-	}
-}
-
 func TestFilterCap(t *testing.T) {
 	f := New(1000, 0.01)
 	cap := f.Cap()
@@ -464,28 +407,6 @@ func TestFilterEstimatedFalsePositiveRate(t *testing.T) {
 	fpRate := f.EstimatedFalsePositiveRate()
 	if fpRate <= 0 || fpRate >= 1 {
 		t.Errorf("expected FP rate between 0 and 1, got %f", fpRate)
-	}
-}
-
-func TestAtomicFilterTestAndAdd(t *testing.T) {
-	f := NewAtomic(1000, 0.01)
-
-	if f.TestAndAdd([]byte("test")) {
-		t.Error("expected TestAndAdd to return false for new item")
-	}
-	if !f.TestAndAdd([]byte("test")) {
-		t.Error("expected TestAndAdd to return true for existing item")
-	}
-}
-
-func TestAtomicFilterTestAndAddString(t *testing.T) {
-	f := NewAtomic(1000, 0.01)
-
-	if f.TestAndAddString("test") {
-		t.Error("expected TestAndAddString to return false for new item")
-	}
-	if !f.TestAndAddString("test") {
-		t.Error("expected TestAndAddString to return true for existing item")
 	}
 }
 
@@ -549,35 +470,6 @@ func TestAtomicFilterEstimatedFalsePositiveRate(t *testing.T) {
 	}
 }
 
-func TestAtomicFilterClear(t *testing.T) {
-	f := NewAtomic(100, 0.01)
-
-	f.Add([]byte("test"))
-	if !f.Test([]byte("test")) {
-		t.Error("expected test to be present before clear")
-	}
-
-	f.Clear()
-
-	if f.Test([]byte("test")) {
-		t.Error("expected test to not be present after clear")
-	}
-	if f.Count() != 0 {
-		t.Errorf("expected count to be 0 after clear, got %d", f.Count())
-	}
-}
-
-func TestShardedAtomicFilterTestAndAddString(t *testing.T) {
-	f := NewShardedAtomicDefault(1000, 0.01)
-
-	if f.TestAndAddString("test") {
-		t.Error("expected TestAndAddString to return false for new item")
-	}
-	if !f.TestAndAddString("test") {
-		t.Error("expected TestAndAddString to return true for existing item")
-	}
-}
-
 func TestShardedAtomicFilterCap(t *testing.T) {
 	f := NewShardedAtomic(1000, 0.01, 4)
 	cap := f.Cap()
@@ -629,24 +521,6 @@ func TestShardedAtomicFilterEstimatedFalsePositiveRate(t *testing.T) {
 	fpRate := f.EstimatedFalsePositiveRate()
 	if fpRate < 0 || fpRate >= 1 {
 		t.Errorf("expected FP rate between 0 and 1, got %f", fpRate)
-	}
-}
-
-func TestShardedAtomicFilterClear(t *testing.T) {
-	f := NewShardedAtomic(100, 0.01, 4)
-
-	f.Add([]byte("test"))
-	if !f.Test([]byte("test")) {
-		t.Error("expected test to be present before clear")
-	}
-
-	f.Clear()
-
-	if f.Test([]byte("test")) {
-		t.Error("expected test to not be present after clear")
-	}
-	if f.Count() != 0 {
-		t.Errorf("expected count to be 0 after clear, got %d", f.Count())
 	}
 }
 

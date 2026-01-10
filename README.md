@@ -209,10 +209,6 @@ func (f *Filter) Add(data []byte)
 func (f *Filter) AddString(s string)
 func (f *Filter) Test(data []byte) bool
 func (f *Filter) TestString(s string) bool
-func (f *Filter) TestAndAdd(data []byte) bool
-func (f *Filter) TestAndAddString(s string) bool
-func (f *Filter) Clear()
-
 func (f *Filter) Cap() uint64                      // Capacity in bits
 func (f *Filter) K() uint32                        // Number of hash functions
 func (f *Filter) Count() uint64                    // Items added

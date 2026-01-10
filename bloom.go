@@ -128,27 +128,6 @@ func (f *Filter) testWithHash(blockIdx uint64, intraHash uint32) bool {
 	return true
 }
 
-// TestAndAdd tests if data is in the filter, then adds it.
-// Returns true if the data might have been present before adding.
-func (f *Filter) TestAndAdd(data []byte) bool {
-	blockIdx, intraHash := hashData(data, f.numBlocks)
-	present := f.testWithHash(blockIdx, intraHash)
-	if !present {
-		f.addWithHash(blockIdx, intraHash)
-	}
-	return present
-}
-
-// TestAndAddString tests if a string is in the filter, then adds it.
-func (f *Filter) TestAndAddString(s string) bool {
-	blockIdx, intraHash := hashString(s, f.numBlocks)
-	present := f.testWithHash(blockIdx, intraHash)
-	if !present {
-		f.addWithHash(blockIdx, intraHash)
-	}
-	return present
-}
-
 // Cap returns the capacity of the filter in bits.
 func (f *Filter) Cap() uint64 {
 	return f.numBlocks * BlockBits
@@ -182,14 +161,6 @@ func (f *Filter) EstimatedFillRatio() float64 {
 // based on the number of items added.
 func (f *Filter) EstimatedFalsePositiveRate() float64 {
 	return EstimateFalsePositiveRate(f.numBlocks, f.k, f.count)
-}
-
-// Clear resets the bloom filter to its initial empty state.
-func (f *Filter) Clear() {
-	for i := range f.blocks {
-		f.blocks[i] = 0
-	}
-	f.count = 0
 }
 
 // AtomicFilter is a thread-safe bloom filter using atomic operations.
@@ -306,24 +277,6 @@ func (f *AtomicFilter) testWithHash(blockIdx uint64, intraHash uint32) bool {
 	return true
 }
 
-// TestAndAdd atomically tests if data is in the filter, then adds it.
-// Note: This is NOT a single atomic operation - there's a race between
-// test and add. Use this when you need best-effort deduplication.
-func (f *AtomicFilter) TestAndAdd(data []byte) bool {
-	blockIdx, intraHash := hashData(data, f.numBlocks)
-	present := f.testWithHash(blockIdx, intraHash)
-	f.addWithHash(blockIdx, intraHash)
-	return present
-}
-
-// TestAndAddString atomically tests if a string is in the filter, then adds it.
-func (f *AtomicFilter) TestAndAddString(s string) bool {
-	blockIdx, intraHash := hashString(s, f.numBlocks)
-	present := f.testWithHash(blockIdx, intraHash)
-	f.addWithHash(blockIdx, intraHash)
-	return present
-}
-
 // Cap returns the capacity of the filter in bits.
 func (f *AtomicFilter) Cap() uint64 {
 	return f.numBlocks * BlockBits
@@ -356,15 +309,6 @@ func (f *AtomicFilter) EstimatedFillRatio() float64 {
 // EstimatedFalsePositiveRate estimates the current false positive rate.
 func (f *AtomicFilter) EstimatedFalsePositiveRate() float64 {
 	return EstimateFalsePositiveRate(f.numBlocks, f.k, f.count.Load())
-}
-
-// Clear resets the bloom filter to its initial empty state.
-// This is NOT safe to call concurrently with other operations.
-func (f *AtomicFilter) Clear() {
-	for i := range f.blocks {
-		f.blocks[i].Store(0)
-	}
-	f.count.Store(0)
 }
 
 // ShardedAtomicFilter is a thread-safe bloom filter that distributes writes
@@ -442,26 +386,6 @@ func (f *ShardedAtomicFilter) TestString(s string) bool {
 	return shard.testWithHash(blockIdx, intraHash)
 }
 
-// TestAndAdd tests if data is in the filter, then adds it.
-func (f *ShardedAtomicFilter) TestAndAdd(data []byte) bool {
-	h := hashRaw(data)
-	shard := f.shards[f.shardIndex(h)]
-	blockIdx, intraHash := hashSplitWithHash(h, shard.numBlocks)
-	present := shard.testWithHash(blockIdx, intraHash)
-	shard.addWithHash(blockIdx, intraHash)
-	return present
-}
-
-// TestAndAddString tests if a string is in the filter, then adds it.
-func (f *ShardedAtomicFilter) TestAndAddString(s string) bool {
-	h := hashRawString(s)
-	shard := f.shards[f.shardIndex(h)]
-	blockIdx, intraHash := hashSplitWithHash(h, shard.numBlocks)
-	present := shard.testWithHash(blockIdx, intraHash)
-	shard.addWithHash(blockIdx, intraHash)
-	return present
-}
-
 // shardIndex extracts the shard index from a hash value.
 // Uses bits 48-63 to avoid correlation with block selection (bits 32-47).
 func (f *ShardedAtomicFilter) shardIndex(h uint64) uint64 {
@@ -524,14 +448,6 @@ func (f *ShardedAtomicFilter) EstimatedFalsePositiveRate() float64 {
 		sum += shard.EstimatedFalsePositiveRate()
 	}
 	return sum / float64(f.numShards)
-}
-
-// Clear resets all shards to their initial empty state.
-// This is NOT safe to call concurrently with other operations.
-func (f *ShardedAtomicFilter) Clear() {
-	for _, shard := range f.shards {
-		shard.Clear()
-	}
 }
 
 // nextPowerOf2 returns the smallest power of 2 >= n.
