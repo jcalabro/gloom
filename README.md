@@ -195,9 +195,11 @@ Traditional bloom filters use k independent hash functions, each potentially acc
 
 ## Benchmarks
 
+The times shown below are the mean time per operation as reported by Go's `testing.B` framework. For latency percentiles, see the [Histogram Benchmarks](#histogram-benchmarks) section.
+
 Benchmarks run on AMD Ryzen 9 9950X (32 threads), Go 1.23+, comparing against:
 - [bits-and-blooms/bloom](https://github.com/bits-and-blooms/bloom) - Popular non-thread-safe implementation
-- [jazware/atomic-bloom](https://github.com/jazware/atomic-bloom) - Thread-safe fork using atomics
+- [jazware/atomic-bloom](https://github.com/jazware/atomic-bloom) - Thread-safe fork of bits-and-blooms using atomics
 - [greatroar/blobloom](https://github.com/greatroar/blobloom) - Cache-blocked filter (requires pre-hashing)
 
 ### Sequential Performance (single-threaded)
@@ -225,6 +227,19 @@ Benchmarks run on AMD Ryzen 9 9950X (32 threads), Go 1.23+, comparing against:
 | Gloom (non-atomic) | 38.3M items/sec |
 | Gloom Atomic | 19.4M items/sec |
 | **Gloom Sharded** | **78.6M items/sec** |
+
+### Histogram Benchmarks
+
+Sample output (Add operations on the same hardware as above):
+
+| Library | Mean | p50 | p99 | p9999 |
+|---------|------|-----|-----|-------|
+| Gloom | 57 ns | 30 ns | 60 ns | 401 ns |
+| GloomAtomic | 76 ns | 50 ns | 100 ns | 501 ns |
+| GloomSharded | 75 ns | 50 ns | 91 ns | 471 ns |
+| BitsAndBlooms | 103 ns | 80 ns | 170 ns | 682 ns |
+| AtomicBloom | 95 ns | 70 ns | 120 ns | 571 ns |
+| Blobloom* | 52 ns | 30 ns | 60 ns | 380 ns |
 
 ### Running Tests and Benchmarks
 
