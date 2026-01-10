@@ -9,17 +9,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
           go-version: "1.23"
 
-      - name: Run tests with race detector
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+      - name: Install just
+        uses: extractions/setup-just@v3
+
+      - name: Run short tests with race detector
+        run: just test
+
+      - name: Run all tests without race detector
+        run: just test-long
 
       - name: Ensure 100% test coverage
         run: |
-          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          COVERAGE=$(go tool cover -func=test-coverage.out | grep total | awk '{print $3}' | sed 's/%//')
           echo "Coverage: ${COVERAGE}%"
           if (( $(echo "$COVERAGE < 100" | bc -l) )); then
             echo "Coverage is below 100%"
@@ -29,7 +36,7 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: coverage.out
+          files: test-coverage.out
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -38,11 +45,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
           go-version: "1.23"
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.7.2
+
+      - name: Install just
+        uses: extractions/setup-just@v3
+
+      - name: Run linter
+        run: just lint

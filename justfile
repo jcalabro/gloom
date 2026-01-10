@@ -16,12 +16,9 @@ test *ARGS="./...":
     just t -race {{ARGS}}
 
 # Runs the tests (long)
+alias test-long := t-long
 t-long *ARGS="./...":
     go test -v -count=1 -covermode=atomic -coverprofile=test-coverage.out {{ARGS}}
-
-# Runs the tests with the race detector enabled (long)
-test-long *ARGS="./...":
-    just t -race {{ARGS}}
 
 # Runs benchmarks (in benchmarks/ submodule)
 bench *ARGS="./...":
