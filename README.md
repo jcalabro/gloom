@@ -229,7 +229,7 @@ Benchmarks run on AMD Ryzen 9 9950X (32 threads), Go 1.23+, comparing against:
 ### Running Tests and Benchmarks
 
 ```bash
-# Using just https://github.com/casey/just
+# Using https://github.com/casey/just
 just # runs the linter and short tests with the race detector enabled
 
 just test
