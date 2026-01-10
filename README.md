@@ -82,11 +82,11 @@ import (
 )
 
 func main() {
-    // Create a sharded filter with 16 shards for high write throughput
-    f := gloom.NewShardedAtomic(1_000_000, 0.01, 16)
+    // Create a sharded filter with auto-tuned shard count (based on GOMAXPROCS)
+    f := gloom.NewShardedAtomicDefault(1_000_000, 0.01)
 
-    // Or use the default (16 shards)
-    // f := gloom.NewShardedAtomicDefault(1_000_000, 0.01)
+    // Or specify shard count explicitly (must be power of 2)
+    // f := gloom.NewShardedAtomic(1_000_000, 0.01, 16)
 
     var wg sync.WaitGroup
     for i := range 32 {

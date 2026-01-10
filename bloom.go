@@ -2,6 +2,7 @@ package gloom
 
 import (
 	"math/bits"
+	"runtime"
 	"sync/atomic"
 	"unsafe"
 )
@@ -398,10 +399,15 @@ func NewShardedAtomic(expectedItems uint64, fpRate float64, numShards uint64) *S
 	}
 }
 
-// NewShardedAtomicDefault creates a sharded filter with a default number of
-// shards based on typical concurrent workloads (16 shards).
+// NewShardedAtomicDefault creates a sharded filter with a number of shards
+// automatically tuned to the current GOMAXPROCS value. This provides good
+// parallel performance without over-sharding on smaller machines.
 func NewShardedAtomicDefault(expectedItems uint64, fpRate float64) *ShardedAtomicFilter {
-	return NewShardedAtomic(expectedItems, fpRate, 16)
+	// Use GOMAXPROCS as a reasonable default - one shard per logical CPU
+	// provides good parallelism while avoiding excessive memory overhead.
+	// Minimum of 4 shards to ensure some parallelism even on small machines.
+	numShards := max(uint64(runtime.GOMAXPROCS(0)), 4)
+	return NewShardedAtomic(expectedItems, fpRate, numShards)
 }
 
 // Add adds data to the bloom filter.
