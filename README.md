@@ -14,12 +14,6 @@ A high-performance bloom filter library for Go, implementing cache-line blocked 
 - **100% test coverage**: Comprehensive test suite
 - **Go 1.23+**: Uses modern atomic operations for best performance
 
-## Installation
-
-```bash
-go get github.com/jcalabro/gloom
-```
-
 ## Usage
 
 ### Basic Usage
