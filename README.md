@@ -1,5 +1,7 @@
 # Gloom
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/jcalabro/gloom.svg)](https://pkg.go.dev/github.com/jcalabro/gloom)
+
 A high-performance bloom filter library for Go, implementing cache-line blocked one-hashing for optimal throughput.
 
 ## Features
