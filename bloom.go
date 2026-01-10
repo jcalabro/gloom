@@ -1,6 +1,7 @@
 package gloom
 
 import (
+	"math/bits"
 	"sync/atomic"
 )
 
@@ -152,7 +153,7 @@ func (f *Filter) NumBlocks() uint64 {
 func (f *Filter) EstimatedFillRatio() float64 {
 	var setBits uint64
 	for _, word := range f.blocks {
-		setBits += uint64(popcount(word))
+		setBits += uint64(bits.OnesCount64(word))
 	}
 	return float64(setBits) / float64(f.numBlocks*BlockBits)
 }
@@ -169,20 +170,6 @@ func (f *Filter) Clear() {
 		f.blocks[i] = 0
 	}
 	f.count = 0
-}
-
-// popcount returns the number of set bits in x.
-func popcount(x uint64) int {
-	// Using the standard popcount algorithm
-	const m1 = 0x5555555555555555
-	const m2 = 0x3333333333333333
-	const m4 = 0x0f0f0f0f0f0f0f0f
-	const h01 = 0x0101010101010101
-
-	x -= (x >> 1) & m1
-	x = (x & m2) + ((x >> 2) & m2)
-	x = (x + (x >> 4)) & m4
-	return int((x * h01) >> 56)
 }
 
 // AtomicFilter is a thread-safe bloom filter using atomic operations.
@@ -324,7 +311,7 @@ func (f *AtomicFilter) NumBlocks() uint64 {
 func (f *AtomicFilter) EstimatedFillRatio() float64 {
 	var setBits uint64
 	for i := range f.blocks {
-		setBits += uint64(popcount(f.blocks[i].Load()))
+		setBits += uint64(bits.OnesCount64(f.blocks[i].Load()))
 	}
 	return float64(setBits) / float64(f.numBlocks*BlockBits)
 }
