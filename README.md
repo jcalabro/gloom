@@ -5,7 +5,7 @@ A high-performance bloom filter library for Go, implementing cache-line blocked 
 ## Features
 
 - **Cache-line optimized**: All k bit probes for a key fit within a single 64-byte cache line, minimizing memory access latency. Memory is explicitly 64-byte aligned for optimal CPU cache behavior.
-- **One-hashing technique**: Uses a single xxhash64 call with prime modulo partitions instead of k independent hash functions
+- **One-hashing technique**: Uses a single xxh3 call with prime modulo partitions instead of k independent hash functions
 - **Three implementations**:
   - `Filter` - Non-thread-safe, fastest for single-threaded workloads
   - `AtomicFilter` - Thread-safe using `atomic.Uint64.Or()`, best for read-heavy concurrent workloads
@@ -159,8 +159,8 @@ Benchmarks run on AMD Ryzen 9 9950X (32 threads), Go 1.23+, comparing against:
 
 | Operation | Gloom | Gloom Atomic | BitsAndBlooms | AtomicBloom | Blobloom* |
 |-----------|-------|--------------|---------------|-------------|-----------|
-| **Add** | 22.9 ns | 36.2 ns | 44.8 ns | 57.0 ns | 16.6 ns |
-| **Test** | 19.4 ns | 20.6 ns | 41.8 ns | 40.9 ns | 5.4 ns |
+| **Add** | 19.9 ns | 35.7 ns | 44.4 ns | 57.5 ns | 16.9 ns |
+| **Test** | 16.3 ns | 17.4 ns | 40.7 ns | 41.4 ns | 5.5 ns |
 
 *Blobloom requires pre-hashing input, so times exclude hash computation.
 
@@ -169,19 +169,19 @@ Benchmarks run on AMD Ryzen 9 9950X (32 threads), Go 1.23+, comparing against:
 | Operation | Gloom Atomic | Gloom Sharded | AtomicBloom |
 |-----------|--------------|---------------|-------------|
 | **Parallel Add** | 51.3 ns | **11.2 ns** | 19.2 ns |
-| **Parallel Test** | **1.05 ns** | 1.11 ns | 1.93 ns |
-| **Mixed R/W** | 31.4 ns | **7.2 ns** | 12.5 ns |
-| **High Contention** | 65.0 ns | **17.1 ns** | 29.7 ns |
+| **Parallel Test** | **0.96 ns** | 1.00 ns | 1.94 ns |
+| **Mixed R/W** | 30.9 ns | **7.1 ns** | 19.6 ns |
+| **High Contention** | 64.6 ns | **17.2 ns** | 43.1 ns |
 
-The sharded filter achieves **4.6x faster parallel writes** than AtomicFilter by distributing operations across 16 independent shards.
+The sharded filter achieves **4.6x faster parallel writes** than AtomicFilter by distributing operations across shards (auto-tuned to GOMAXPROCS).
 
 ### Throughput
 
 | Implementation | Items/sec (8 goroutines) |
 |----------------|--------------------------|
-| Gloom (non-atomic) | 38.7M items/sec |
-| Gloom Atomic | 20.6M items/sec |
-| **Gloom Sharded** | **75.3M items/sec** |
+| Gloom (non-atomic) | 38.3M items/sec |
+| Gloom Atomic | 19.4M items/sec |
+| **Gloom Sharded** | **78.6M items/sec** |
 
 ### Running Benchmarks
 

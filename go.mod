@@ -2,4 +2,6 @@ module github.com/jcalabro/gloom
 
 go 1.23
 
-require github.com/cespare/xxhash/v2 v2.3.0
+require github.com/zeebo/xxh3 v1.0.2
+
+require github.com/klauspost/cpuid/v2 v2.0.9 // indirect

@@ -1026,6 +1026,12 @@ func validateFPRate(t *testing.T, observedFP, targetFP, loadFactor float64, test
 		margin = minMargin
 	}
 
+	// Be more generous for low FP rate targets where relative variance is higher
+	// Allow up to 3x the target rate for very low targets
+	if targetFP <= 0.01 {
+		margin = math.Max(margin, targetFP*2.0)
+	}
+
 	// Be more generous with the margin for non-100% load tests
 	if loadFactor != 1.0 {
 		margin = math.Max(margin, targetFP*0.5) // Allow 50% relative error

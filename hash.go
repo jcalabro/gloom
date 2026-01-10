@@ -1,19 +1,19 @@
 package gloom
 
-import "github.com/cespare/xxhash/v2"
+import "github.com/zeebo/xxh3"
 
-// hashData computes the xxhash64 of the given data and returns
+// hashData computes the xxh3 hash of the given data and returns
 // the block index (upper 32 bits) and intra-block hash (lower 32 bits).
 func hashData(data []byte, numBlocks uint64) (blockIdx uint64, intraHash uint32) {
-	h := xxhash.Sum64(data)
+	h := xxh3.Hash(data)
 	return hashSplit(h, numBlocks)
 }
 
-// hashString computes the xxhash64 of the given string and returns
+// hashString computes the xxh3 hash of the given string and returns
 // the block index (upper 32 bits) and intra-block hash (lower 32 bits).
 // This avoids the allocation of converting string to []byte.
 func hashString(s string, numBlocks uint64) (blockIdx uint64, intraHash uint32) {
-	h := xxhash.Sum64String(s)
+	h := xxh3.HashString(s)
 	return hashSplit(h, numBlocks)
 }
 
@@ -28,12 +28,12 @@ func hashSplit(h uint64, numBlocks uint64) (blockIdx uint64, intraHash uint32) {
 
 // hashRaw returns the raw 64-bit hash of data.
 func hashRaw(data []byte) uint64 {
-	return xxhash.Sum64(data)
+	return xxh3.Hash(data)
 }
 
 // hashRawString returns the raw 64-bit hash of a string.
 func hashRawString(s string) uint64 {
-	return xxhash.Sum64String(s)
+	return xxh3.HashString(s)
 }
 
 // hashSplitWithHash splits a pre-computed hash into block index and intra-block hash.
