@@ -25,3 +25,18 @@ func hashSplit(h uint64, numBlocks uint64) (blockIdx uint64, intraHash uint32) {
 	intraHash = uint32(h)
 	return
 }
+
+// hashRaw returns the raw 64-bit hash of data.
+func hashRaw(data []byte) uint64 {
+	return xxhash.Sum64(data)
+}
+
+// hashRawString returns the raw 64-bit hash of a string.
+func hashRawString(s string) uint64 {
+	return xxhash.Sum64String(s)
+}
+
+// hashSplitWithHash splits a pre-computed hash into block index and intra-block hash.
+func hashSplitWithHash(h uint64, numBlocks uint64) (blockIdx uint64, intraHash uint32) {
+	return hashSplit(h, numBlocks)
+}

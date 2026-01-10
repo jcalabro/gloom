@@ -233,7 +233,7 @@ func BenchmarkTestParallel_AtomicBloom(b *testing.B) {
 func BenchmarkMixed_GloomAtomic(b *testing.B) {
 	f := gloom.NewAtomic(benchItems, benchFPRate)
 	// Pre-populate half
-	for i := 0; i < benchItems/2; i++ {
+	for i := range benchItems / 2 {
 		f.Add(testKeys[i])
 	}
 	b.ResetTimer()
@@ -253,7 +253,7 @@ func BenchmarkMixed_GloomAtomic(b *testing.B) {
 func BenchmarkMixed_AtomicBloom(b *testing.B) {
 	f := atomicbloom.NewWithEstimates(benchItems, benchFPRate)
 	// Pre-populate half
-	for i := 0; i < benchItems/2; i++ {
+	for i := range benchItems / 2 {
 		f.Add(testKeys[i])
 	}
 	b.ResetTimer()
@@ -364,6 +364,113 @@ func BenchmarkThroughput_GloomAtomic(b *testing.B) {
 	const itemsPerGoroutine = 100000
 
 	f := gloom.NewAtomic(uint64(goroutines*itemsPerGoroutine), benchFPRate)
+
+	b.ResetTimer()
+	for range b.N {
+		var wg sync.WaitGroup
+		wg.Add(goroutines)
+		for g := range goroutines {
+			go func(gid int) {
+				defer wg.Done()
+				base := gid * itemsPerGoroutine
+				for i := range itemsPerGoroutine {
+					f.Add(testKeys[(base+i)%benchItems])
+				}
+			}(g)
+		}
+		wg.Wait()
+	}
+	b.ReportMetric(float64(goroutines*itemsPerGoroutine), "items/op")
+}
+
+// ============================================================================
+// Sharded Atomic Filter Benchmarks
+// ============================================================================
+
+func BenchmarkAddSequential_GloomSharded(b *testing.B) {
+	f := gloom.NewShardedAtomic(benchItems, benchFPRate, 16)
+	b.ResetTimer()
+	for i := range b.N {
+		f.Add(testKeys[i%benchItems])
+	}
+}
+
+func BenchmarkTestSequential_GloomSharded(b *testing.B) {
+	f := gloom.NewShardedAtomic(benchItems, benchFPRate, 16)
+	for i := range benchItems {
+		f.Add(testKeys[i])
+	}
+	b.ResetTimer()
+	for i := range b.N {
+		f.Test(testKeys[i%benchItems])
+	}
+}
+
+func BenchmarkAddParallel_GloomSharded(b *testing.B) {
+	f := gloom.NewShardedAtomic(benchItems, benchFPRate, 16)
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			f.Add(testKeys[i%benchItems])
+			i++
+		}
+	})
+}
+
+func BenchmarkTestParallel_GloomSharded(b *testing.B) {
+	f := gloom.NewShardedAtomic(benchItems, benchFPRate, 16)
+	for i := range benchItems {
+		f.Add(testKeys[i])
+	}
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			f.Test(testKeys[i%benchItems])
+			i++
+		}
+	})
+}
+
+func BenchmarkMixed_GloomSharded(b *testing.B) {
+	f := gloom.NewShardedAtomic(benchItems, benchFPRate, 16)
+	// Pre-populate half
+	for i := range benchItems / 2 {
+		f.Add(testKeys[i])
+	}
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			if i%2 == 0 {
+				f.Add(testKeys[(benchItems/2+i)%benchItems])
+			} else {
+				f.Test(testKeys[i%benchItems])
+			}
+			i++
+		}
+	})
+}
+
+func BenchmarkHighContention_GloomSharded(b *testing.B) {
+	// Use a small filter to maximize contention
+	f := gloom.NewShardedAtomic(1000, benchFPRate, 16)
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			f.Add(testKeys[i%1000])
+			i++
+		}
+	})
+}
+
+func BenchmarkThroughput_GloomSharded(b *testing.B) {
+	const goroutines = 8
+	const itemsPerGoroutine = 100000
+
+	f := gloom.NewShardedAtomic(uint64(goroutines*itemsPerGoroutine), benchFPRate, 16)
 
 	b.ResetTimer()
 	for range b.N {

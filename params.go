@@ -74,11 +74,8 @@ func OptimalParams(expectedItems uint64, fpRate float64) (numBlocks uint64, k ui
 	// Total bits needed
 	totalBits := float64(expectedItems) * bitsPerItem
 
-	// Round up to nearest block
+	// Round up to nearest block (always >= 1 since totalBits > 0)
 	numBlocks = uint64(math.Ceil(totalBits / BlockBits))
-	if numBlocks == 0 {
-		numBlocks = 1
-	}
 
 	// Actual bits per item given block rounding
 	actualBitsPerItem := float64(numBlocks*BlockBits) / float64(expectedItems)
@@ -88,12 +85,8 @@ func OptimalParams(expectedItems uint64, fpRate float64) (numBlocks uint64, k ui
 	k = uint32(math.Round(kFloat))
 
 	// Clamp k to supported range
-	if k < 3 {
-		k = 3
-	}
-	if k > 14 {
-		k = 14
-	}
+	k = max(k, 3)
+	k = min(k, 14)
 
 	return numBlocks, k, bitsPerItem
 }

@@ -6,8 +6,12 @@ A high-performance bloom filter library for Go, implementing cache-line blocked 
 
 - **Cache-line optimized**: All k bit probes for a key fit within a single 64-byte cache line, minimizing memory access latency
 - **One-hashing technique**: Uses a single xxhash64 call with prime modulo partitions instead of k independent hash functions
-- **Two implementations**: Non-thread-safe `Filter` and thread-safe `AtomicFilter` using `atomic.Uint64.Or()`
+- **Three implementations**:
+  - `Filter` - Non-thread-safe, fastest for single-threaded workloads
+  - `AtomicFilter` - Thread-safe using `atomic.Uint64.Or()`, best for read-heavy concurrent workloads
+  - `ShardedAtomicFilter` - Thread-safe with sharding, best for write-heavy concurrent workloads
 - **Zero allocations**: Hot paths (Add/Test) allocate no memory
+- **100% test coverage**: Comprehensive test suite
 - **Go 1.23+**: Uses modern atomic operations for best performance
 
 ## Installation
@@ -58,11 +62,44 @@ func main() {
     f := gloom.NewAtomic(1_000_000, 0.01)
 
     var wg sync.WaitGroup
-    for i := 0; i < 8; i++ {
+    for i := range 8 {
         wg.Add(1)
         go func(id int) {
             defer wg.Done()
-            for j := 0; j < 100000; j++ {
+            for j := range 100000 {
+                f.AddString(fmt.Sprintf("key-%d-%d", id, j))
+            }
+        }(i)
+    }
+    wg.Wait()
+}
+```
+
+### High-Throughput Concurrent Writes
+
+For write-heavy concurrent workloads, use `ShardedAtomicFilter` which distributes writes across multiple independent shards to reduce contention:
+
+```go
+package main
+
+import (
+    "sync"
+    "github.com/jcalabro/gloom"
+)
+
+func main() {
+    // Create a sharded filter with 16 shards for high write throughput
+    f := gloom.NewShardedAtomic(1_000_000, 0.01, 16)
+
+    // Or use the default (16 shards)
+    // f := gloom.NewShardedAtomicDefault(1_000_000, 0.01)
+
+    var wg sync.WaitGroup
+    for i := range 32 {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            for j := range 100000 {
                 f.AddString(fmt.Sprintf("key-%d-%d", id, j))
             }
         }(i)
@@ -121,7 +158,7 @@ Within each block (k=7 example):
 
 Benchmarks run on AMD Ryzen 9 9950X (32 threads), Go 1.23+, comparing against:
 - [bits-and-blooms/bloom](https://github.com/bits-and-blooms/bloom) - Popular non-thread-safe implementation
-- [ericvolp12/atomic-bloom](https://github.com/ericvolp12/atomic-bloom) - Thread-safe fork using atomics
+- [jazware/atomic-bloom](https://github.com/jazware/atomic-bloom) - Thread-safe fork using atomics
 - [greatroar/blobloom](https://github.com/greatroar/blobloom) - Cache-blocked filter (requires pre-hashing)
 
 ### Sequential Performance (single-threaded)
@@ -135,39 +172,28 @@ Benchmarks run on AMD Ryzen 9 9950X (32 threads), Go 1.23+, comparing against:
 
 ### Parallel Performance (GOMAXPROCS=32)
 
-| Operation | Gloom Atomic | AtomicBloom | Winner |
-|-----------|--------------|-------------|--------|
-| **Parallel Add** | 53.1 ns | 18.6 ns | AtomicBloom |
-| **Parallel Test** | **1.06 ns** | 3.2 ns | **Gloom 3x faster** |
-| **Mixed R/W** | 29.9 ns | 12.2 ns | AtomicBloom |
-| **High Contention** | 66.1 ns | 37.6 ns | AtomicBloom |
+| Operation | Gloom Atomic | Gloom Sharded | AtomicBloom |
+|-----------|--------------|---------------|-------------|
+| **Parallel Add** | 48.8 ns | **13.3 ns** | 19.3 ns |
+| **Parallel Test** | **1.06 ns** | 1.12 ns | 1.95 ns |
+| **Mixed R/W** | 29.9 ns | **8.3 ns** | 12.2 ns |
+| **High Contention** | 65.9 ns | **20.6 ns** | 29.6 ns |
+
+The sharded filter achieves **3.7x faster parallel writes** than AtomicFilter by distributing operations across 16 independent shards.
 
 ### Throughput
 
 | Implementation | Items/sec (8 goroutines) |
 |----------------|--------------------------|
-| Gloom (non-atomic) | **34.4M items/sec** |
-| Gloom Atomic | 18.7M items/sec |
-
-### Analysis
-
-**Strengths:**
-- Sequential operations are 1.9-2.5x faster than competitors
-- Parallel reads are extremely fast (~1 ns) due to cache-line locality
-- Zero allocations in all operations
-
-**Trade-off - Write Contention:**
-The cache-line blocking approach creates write contention under parallel workloads. When multiple goroutines write concurrently, they may contend on the same 512-bit block. AtomicBloom spreads writes across the entire filter, reducing contention at the cost of cache efficiency.
-
-**Recommendation:**
-- Use `Filter` for single-threaded workloads (fastest)
-- Use `AtomicFilter` for read-heavy concurrent workloads
-- Consider AtomicBloom for write-heavy concurrent workloads with high parallelism
+| Gloom (non-atomic) | 37.0M items/sec |
+| Gloom Atomic | 18.5M items/sec |
+| **Gloom Sharded** | **74.5M items/sec** |
 
 ### Running Benchmarks
 
 ```bash
 # Using just
+just bench
 just bench-long
 
 # Or manually
@@ -201,6 +227,16 @@ func (f *Filter) EstimatedFalsePositiveRate() float64
 ### AtomicFilter (Thread-Safe)
 
 Same API as `Filter`, safe for concurrent use. Uses `atomic.Uint64.Or()` for lock-free bit setting.
+
+### ShardedAtomicFilter (Thread-Safe, High Write Throughput)
+
+Same API as `Filter`, safe for concurrent use. Distributes keys across N independent `AtomicFilter` shards to reduce write contention. Use when you have highly parallel write throughput requirements.
+
+Also has this additional method:
+
+```go
+func (f *ShardedAtomicFilter) NumBlocks() uint64
+```
 
 ## License
 
