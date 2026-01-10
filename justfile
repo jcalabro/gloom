@@ -17,8 +17,8 @@ test *ARGS="./...":
 
 # Runs benchmarks (in benchmarks/ submodule)
 bench *ARGS="./...":
-    cd benchmarks && go test -bench=. -benchmem {{ARGS}}
+    cd benchmarks && GOAMD64=v2 go test -bench=. -benchmem {{ARGS}}
 
 # Runs benchmarks with longer duration for accurate results
 bench-long *ARGS="./...":
-    cd benchmarks && go test -bench=. -benchmem -benchtime=3s -count=3 {{ARGS}}
+    just bench -benchtime=3s -count=3 {{ARGS}}
