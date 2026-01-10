@@ -159,8 +159,8 @@ Benchmarks run on AMD Ryzen 9 9950X (32 threads), Go 1.23+, comparing against:
 
 | Operation | Gloom | Gloom Atomic | BitsAndBlooms | AtomicBloom | Blobloom* |
 |-----------|-------|--------------|---------------|-------------|-----------|
-| **Add** | 23.3 ns | 35.9 ns | 44.9 ns | 58.2 ns | 17.0 ns |
-| **Test** | 19.5 ns | 20.8 ns | 41.6 ns | 41.7 ns | 5.4 ns |
+| **Add** | 22.9 ns | 36.2 ns | 44.8 ns | 57.0 ns | 16.6 ns |
+| **Test** | 19.4 ns | 20.6 ns | 41.8 ns | 40.9 ns | 5.4 ns |
 
 *Blobloom requires pre-hashing input, so times exclude hash computation.
 
@@ -168,20 +168,20 @@ Benchmarks run on AMD Ryzen 9 9950X (32 threads), Go 1.23+, comparing against:
 
 | Operation | Gloom Atomic | Gloom Sharded | AtomicBloom |
 |-----------|--------------|---------------|-------------|
-| **Parallel Add** | 48.8 ns | **13.3 ns** | 19.3 ns |
-| **Parallel Test** | **1.06 ns** | 1.12 ns | 1.95 ns |
-| **Mixed R/W** | 29.9 ns | **8.3 ns** | 12.2 ns |
-| **High Contention** | 65.9 ns | **20.6 ns** | 29.6 ns |
+| **Parallel Add** | 51.3 ns | **11.2 ns** | 19.2 ns |
+| **Parallel Test** | **1.05 ns** | 1.11 ns | 1.93 ns |
+| **Mixed R/W** | 31.4 ns | **7.2 ns** | 12.5 ns |
+| **High Contention** | 65.0 ns | **17.1 ns** | 29.7 ns |
 
-The sharded filter achieves **3.7x faster parallel writes** than AtomicFilter by distributing operations across 16 independent shards.
+The sharded filter achieves **4.6x faster parallel writes** than AtomicFilter by distributing operations across 16 independent shards.
 
 ### Throughput
 
 | Implementation | Items/sec (8 goroutines) |
 |----------------|--------------------------|
-| Gloom (non-atomic) | 37.0M items/sec |
-| Gloom Atomic | 18.5M items/sec |
-| **Gloom Sharded** | **74.5M items/sec** |
+| Gloom (non-atomic) | 38.7M items/sec |
+| Gloom Atomic | 20.6M items/sec |
+| **Gloom Sharded** | **75.3M items/sec** |
 
 ### Running Benchmarks
 
