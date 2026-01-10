@@ -60,16 +60,15 @@ func main() {
     f := gloom.NewAtomic(1_000_000, 0.01)
 
     var wg sync.WaitGroup
+    defer wg.Wait()
+
     for i := range 8 {
-        wg.Add(1)
-        go func(id int) {
-            defer wg.Done()
+        wg.Go(func() {
             for j := range 100000 {
-                f.AddString(fmt.Sprintf("key-%d-%d", id, j))
+                f.AddString(fmt.Sprintf("key-%d-%d", i, j))
             }
-        }(i)
+        })
     }
-    wg.Wait()
 }
 ```
 
@@ -93,16 +92,15 @@ func main() {
     // f := gloom.NewShardedAtomic(1_000_000, 0.01, 16)
 
     var wg sync.WaitGroup
+    defer wg.Wait()
+
     for i := range 32 {
-        wg.Add(1)
-        go func(id int) {
-            defer wg.Done()
+        wg.Go(func() {
             for j := range 100000 {
-                f.AddString(fmt.Sprintf("key-%d-%d", id, j))
+                f.AddString(fmt.Sprintf("key-%d-%d", i, j))
             }
-        }(i)
+        })
     }
-    wg.Wait()
 }
 ```
 
