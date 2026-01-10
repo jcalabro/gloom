@@ -189,14 +189,11 @@ The sharded filter achieves **4.6x faster parallel writes** than AtomicFilter by
 # Using just
 just bench
 just bench-long
-
-# Or manually
-cd benchmarks && go test -bench=. -benchmem -benchtime=3s ./...
 ```
 
 ### Tips
 
-For maximum performance on modern x86-64 CPUs, ensure you're building with `GOAMD64=v2` or above. This enables hardware POPCNT instructions (used for fill ratio estimation) without runtime CPU detection overhead. Ensure your CPU supports `popcnt` first.
+For maximum performance on modern x86-64 CPUs, ensure you're building with [GOAMD64=v2](https://go.dev/wiki/MinimumRequirements#microarchitecture-support) or above. This enables hardware POPCNT instructions (used for fill ratio estimation) without runtime CPU detection overhead. Ensure your CPU supports `popcnt` first.
 
 ## API Reference
 
