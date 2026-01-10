@@ -1,9 +1,12 @@
 package benchmarks
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	bab "github.com/bits-and-blooms/bloom/v3"
 	"github.com/cespare/xxhash/v2"
@@ -488,4 +491,306 @@ func BenchmarkThroughput_GloomSharded(b *testing.B) {
 		wg.Wait()
 	}
 	b.ReportMetric(float64(goroutines*itemsPerGoroutine), "items/op")
+}
+
+// ============================================================================
+// Histogram Utilities
+// ============================================================================
+
+const histogramSamples = 100_000
+
+// histogram collects timing samples and calculates percentiles
+type histogram struct {
+	samples []time.Duration
+}
+
+func newHistogram(capacity int) *histogram {
+	return &histogram{
+		samples: make([]time.Duration, 0, capacity),
+	}
+}
+
+func (h *histogram) record(d time.Duration) {
+	h.samples = append(h.samples, d)
+}
+
+func (h *histogram) percentile(p float64) time.Duration {
+	if len(h.samples) == 0 {
+		return 0
+	}
+
+	sorted := make([]time.Duration, len(h.samples))
+	copy(sorted, h.samples)
+	slices.SortFunc(sorted, func(a, b time.Duration) int { return cmp.Compare(a, b) })
+
+	idx := int(float64(len(sorted)-1) * p / 100.0)
+	return sorted[idx]
+}
+
+func (h *histogram) reportPercentiles(b *testing.B) {
+	b.ReportMetric(float64(h.percentile(50).Nanoseconds()), "p50-ns")
+	b.ReportMetric(float64(h.percentile(99).Nanoseconds()), "p99-ns")
+	b.ReportMetric(float64(h.percentile(99.99).Nanoseconds()), "p9999-ns")
+}
+
+// ============================================================================
+// Histogram Add Benchmarks
+// ============================================================================
+
+func BenchmarkHistogramAdd_Gloom(b *testing.B) {
+	f := gloom.New(benchItems, benchFPRate)
+	hist := newHistogram(histogramSamples)
+
+	b.ResetTimer()
+	for i := range b.N {
+		idx := i % benchItems
+		start := time.Now()
+		f.Add(testKeys[idx])
+		if i < histogramSamples {
+			hist.record(time.Since(start))
+		}
+	}
+	hist.reportPercentiles(b)
+}
+
+func BenchmarkHistogramAdd_GloomString(b *testing.B) {
+	f := gloom.New(benchItems, benchFPRate)
+	hist := newHistogram(histogramSamples)
+
+	b.ResetTimer()
+	for i := range b.N {
+		idx := i % benchItems
+		start := time.Now()
+		f.AddString(testKeysStr[idx])
+		if i < histogramSamples {
+			hist.record(time.Since(start))
+		}
+	}
+	hist.reportPercentiles(b)
+}
+
+func BenchmarkHistogramAdd_GloomAtomic(b *testing.B) {
+	f := gloom.NewAtomic(benchItems, benchFPRate)
+	hist := newHistogram(histogramSamples)
+
+	b.ResetTimer()
+	for i := range b.N {
+		idx := i % benchItems
+		start := time.Now()
+		f.Add(testKeys[idx])
+		if i < histogramSamples {
+			hist.record(time.Since(start))
+		}
+	}
+	hist.reportPercentiles(b)
+}
+
+func BenchmarkHistogramAdd_GloomSharded(b *testing.B) {
+	f := gloom.NewShardedAtomic(benchItems, benchFPRate, 16)
+	hist := newHistogram(histogramSamples)
+
+	b.ResetTimer()
+	for i := range b.N {
+		idx := i % benchItems
+		start := time.Now()
+		f.Add(testKeys[idx])
+		if i < histogramSamples {
+			hist.record(time.Since(start))
+		}
+	}
+	hist.reportPercentiles(b)
+}
+
+func BenchmarkHistogramAdd_BitsAndBlooms(b *testing.B) {
+	f := bab.NewWithEstimates(benchItems, benchFPRate)
+	hist := newHistogram(histogramSamples)
+
+	b.ResetTimer()
+	for i := range b.N {
+		idx := i % benchItems
+		start := time.Now()
+		f.Add(testKeys[idx])
+		if i < histogramSamples {
+			hist.record(time.Since(start))
+		}
+	}
+	hist.reportPercentiles(b)
+}
+
+func BenchmarkHistogramAdd_AtomicBloom(b *testing.B) {
+	f := atomicbloom.NewWithEstimates(benchItems, benchFPRate)
+	hist := newHistogram(histogramSamples)
+
+	b.ResetTimer()
+	for i := range b.N {
+		idx := i % benchItems
+		start := time.Now()
+		f.Add(testKeys[idx])
+		if i < histogramSamples {
+			hist.record(time.Since(start))
+		}
+	}
+	hist.reportPercentiles(b)
+}
+
+func BenchmarkHistogramAdd_Blobloom(b *testing.B) {
+	f := blobloom.NewOptimized(blobloom.Config{
+		Capacity: benchItems,
+		FPRate:   benchFPRate,
+	})
+	hist := newHistogram(histogramSamples)
+
+	b.ResetTimer()
+	for i := range b.N {
+		idx := i % benchItems
+		start := time.Now()
+		h := xxhash.Sum64(testKeys[idx])
+		f.Add(h)
+		if i < histogramSamples {
+			hist.record(time.Since(start))
+		}
+	}
+	hist.reportPercentiles(b)
+}
+
+// ============================================================================
+// Histogram Test Benchmarks
+// ============================================================================
+
+func BenchmarkHistogramTest_Gloom(b *testing.B) {
+	f := gloom.New(benchItems, benchFPRate)
+	for i := range benchItems {
+		f.Add(testKeys[i])
+	}
+	hist := newHistogram(histogramSamples)
+
+	b.ResetTimer()
+	for i := range b.N {
+		idx := i % benchItems
+		start := time.Now()
+		f.Test(testKeys[idx])
+		if i < histogramSamples {
+			hist.record(time.Since(start))
+		}
+	}
+	hist.reportPercentiles(b)
+}
+
+func BenchmarkHistogramTest_GloomString(b *testing.B) {
+	f := gloom.New(benchItems, benchFPRate)
+	for i := range benchItems {
+		f.Add(testKeys[i])
+	}
+	hist := newHistogram(histogramSamples)
+
+	b.ResetTimer()
+	for i := range b.N {
+		idx := i % benchItems
+		start := time.Now()
+		f.TestString(testKeysStr[idx])
+		if i < histogramSamples {
+			hist.record(time.Since(start))
+		}
+	}
+	hist.reportPercentiles(b)
+}
+
+func BenchmarkHistogramTest_GloomAtomic(b *testing.B) {
+	f := gloom.NewAtomic(benchItems, benchFPRate)
+	for i := range benchItems {
+		f.Add(testKeys[i])
+	}
+	hist := newHistogram(histogramSamples)
+
+	b.ResetTimer()
+	for i := range b.N {
+		idx := i % benchItems
+		start := time.Now()
+		f.Test(testKeys[idx])
+		if i < histogramSamples {
+			hist.record(time.Since(start))
+		}
+	}
+	hist.reportPercentiles(b)
+}
+
+func BenchmarkHistogramTest_GloomSharded(b *testing.B) {
+	f := gloom.NewShardedAtomic(benchItems, benchFPRate, 16)
+	for i := range benchItems {
+		f.Add(testKeys[i])
+	}
+	hist := newHistogram(histogramSamples)
+
+	b.ResetTimer()
+	for i := range b.N {
+		idx := i % benchItems
+		start := time.Now()
+		f.Test(testKeys[idx])
+		if i < histogramSamples {
+			hist.record(time.Since(start))
+		}
+	}
+	hist.reportPercentiles(b)
+}
+
+func BenchmarkHistogramTest_BitsAndBlooms(b *testing.B) {
+	f := bab.NewWithEstimates(benchItems, benchFPRate)
+	for i := range benchItems {
+		f.Add(testKeys[i])
+	}
+	hist := newHistogram(histogramSamples)
+
+	b.ResetTimer()
+	for i := range b.N {
+		idx := i % benchItems
+		start := time.Now()
+		f.Test(testKeys[idx])
+		if i < histogramSamples {
+			hist.record(time.Since(start))
+		}
+	}
+	hist.reportPercentiles(b)
+}
+
+func BenchmarkHistogramTest_AtomicBloom(b *testing.B) {
+	f := atomicbloom.NewWithEstimates(benchItems, benchFPRate)
+	for i := range benchItems {
+		f.Add(testKeys[i])
+	}
+	hist := newHistogram(histogramSamples)
+
+	b.ResetTimer()
+	for i := range b.N {
+		idx := i % benchItems
+		start := time.Now()
+		f.Test(testKeys[idx])
+		if i < histogramSamples {
+			hist.record(time.Since(start))
+		}
+	}
+	hist.reportPercentiles(b)
+}
+
+func BenchmarkHistogramTest_Blobloom(b *testing.B) {
+	f := blobloom.NewOptimized(blobloom.Config{
+		Capacity: benchItems,
+		FPRate:   benchFPRate,
+	})
+	hashes := make([]uint64, benchItems)
+	for i := range benchItems {
+		hashes[i] = xxhash.Sum64(testKeys[i])
+		f.Add(hashes[i])
+	}
+	hist := newHistogram(histogramSamples)
+
+	b.ResetTimer()
+	for i := range b.N {
+		idx := i % benchItems
+		start := time.Now()
+		f.Has(hashes[idx])
+		if i < histogramSamples {
+			hist.record(time.Since(start))
+		}
+	}
+	hist.reportPercentiles(b)
 }
