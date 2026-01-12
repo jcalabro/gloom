@@ -347,9 +347,6 @@ func NewShardedAtomic(expectedItems uint64, fpRate float64, numShards uint64) *S
 // automatically tuned to the current GOMAXPROCS value. This provides good
 // parallel performance without over-sharding on smaller machines.
 func NewShardedAtomicDefault(expectedItems uint64, fpRate float64) *ShardedAtomicFilter {
-	// Use GOMAXPROCS as a reasonable default - one shard per logical CPU
-	// provides good parallelism while avoiding excessive memory overhead.
-	// Minimum of 4 shards to ensure some parallelism even on small machines.
 	numShards := max(uint64(runtime.GOMAXPROCS(0)), 4)
 	return NewShardedAtomic(expectedItems, fpRate, numShards)
 }
