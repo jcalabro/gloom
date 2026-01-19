@@ -13,7 +13,7 @@ A high-performance bloom filter library for Go, implementing cache-line blocked 
 - **Cache-line optimized**: All k bit probes for a key are aligned and fit within a single 64-byte cache line, minimizing memory access latency
 - **One-hashing technique**: Uses a single xxh3 call with prime modulo partitions instead of k independent hash functions
 - **Three implementations**:
-  - `Filter` - Non-thread-safe, fastest for single-threaded workloads
+  - `Filter` - Non-thread-safe, fastest for single-threaded workloads, allows for serialization/deserialization
   - `AtomicFilter` - Thread-safe using `atomic.Uint64.Or()`, best for read-heavy concurrent workloads
   - `ShardedAtomicFilter` - Thread-safe with sharding, best for write-heavy concurrent workloads
 - **Zero allocations**: Hot paths (Add/Test) allocate no memory

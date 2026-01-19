@@ -1,6 +1,9 @@
 package gloom
 
 import (
+	"encoding/binary"
+	"errors"
+	"fmt"
 	"math/bits"
 	"runtime"
 	"sync/atomic"
@@ -161,6 +164,123 @@ func (f *Filter) EstimatedFillRatio() float64 {
 // based on the number of items added.
 func (f *Filter) EstimatedFalsePositiveRate() float64 {
 	return EstimateFalsePositiveRate(f.numBlocks, f.k, f.count)
+}
+
+// Serialization constants and errors.
+const (
+	// serializeVersion is the current serialization format version.
+	serializeVersion byte = 1
+
+	// headerSize is the size of the serialization header in bytes.
+	// Version (1) + K (4) + NumBlocks (8) + Count (8) = 21 bytes
+	headerSize = 21
+)
+
+var (
+	// ErrInvalidData is returned when the serialized data is invalid or corrupted.
+	ErrInvalidData = errors.New("gloom: invalid serialized data")
+
+	// ErrUnsupportedVersion is returned when the serialization version is not supported.
+	ErrUnsupportedVersion = errors.New("gloom: unsupported serialization version")
+
+	// ErrInvalidK is returned when k value in serialized data is not supported.
+	ErrInvalidK = errors.New("gloom: invalid k value in serialized data")
+)
+
+// MarshalBinary serializes the bloom filter to a byte slice.
+// The serialized format is:
+//   - Version (1 byte): serialization format version
+//   - K (4 bytes): number of hash functions (little-endian uint32)
+//   - NumBlocks (8 bytes): number of 512-bit blocks (little-endian uint64)
+//   - Count (8 bytes): number of items added (little-endian uint64)
+//   - Blocks (numBlocks * 64 bytes): the bit array data (little-endian uint64s)
+//
+// The primes and offsets are not serialized as they can be derived from k.
+func (f *Filter) MarshalBinary() ([]byte, error) {
+	// Calculate total size: header + block data
+	dataSize := f.numBlocks * BlockWords * 8
+	totalSize := headerSize + dataSize
+
+	buf := make([]byte, totalSize)
+
+	// Write header
+	buf[0] = serializeVersion
+	binary.LittleEndian.PutUint32(buf[1:5], f.k)
+	binary.LittleEndian.PutUint64(buf[5:13], f.numBlocks)
+	binary.LittleEndian.PutUint64(buf[13:21], f.count)
+
+	// Write block data
+	offset := headerSize
+	for _, word := range f.blocks {
+		binary.LittleEndian.PutUint64(buf[offset:offset+8], word)
+		offset += 8
+	}
+
+	return buf, nil
+}
+
+// UnmarshalBinary deserializes a bloom filter from a byte slice.
+// Returns an error if the data is invalid or corrupted.
+func UnmarshalBinary(data []byte) (*Filter, error) {
+	if len(data) < headerSize {
+		return nil, fmt.Errorf("%w: data too short (got %d bytes, need at least %d)", ErrInvalidData, len(data), headerSize)
+	}
+
+	// Read and validate version
+	version := data[0]
+	if version != serializeVersion {
+		return nil, fmt.Errorf("%w: got version %d, expected %d", ErrUnsupportedVersion, version, serializeVersion)
+	}
+
+	// Read header fields
+	k := binary.LittleEndian.Uint32(data[1:5])
+	numBlocks := binary.LittleEndian.Uint64(data[5:13])
+	count := binary.LittleEndian.Uint64(data[13:21])
+
+	// Validate k
+	primes := GetPrimePartition(k)
+	if primes == nil {
+		return nil, fmt.Errorf("%w: k=%d is not supported (valid range: 3-14)", ErrInvalidK, k)
+	}
+
+	// Validate numBlocks to prevent overflow in subsequent calculations.
+	// Max safe value ensures numBlocks * BlockWords * 8 won't overflow uint64
+	// and that we can safely convert to int for slice allocation.
+	// We also require at least 1 block for a valid filter.
+	const maxNumBlocks = uint64(1) << 50 // ~1 petabyte of data, more than enough
+	if numBlocks == 0 {
+		return nil, fmt.Errorf("%w: numBlocks cannot be zero", ErrInvalidData)
+	}
+	if numBlocks > maxNumBlocks {
+		return nil, fmt.Errorf("%w: numBlocks too large (%d)", ErrInvalidData, numBlocks)
+	}
+
+	// Validate data length (safe from overflow now that numBlocks is bounded)
+	expectedDataLen := numBlocks * BlockWords * 8
+	expectedTotalLen := headerSize + expectedDataLen
+	if uint64(len(data)) != expectedTotalLen {
+		return nil, fmt.Errorf("%w: data length mismatch (got %d bytes, expected %d)", ErrInvalidData, len(data), expectedTotalLen)
+	}
+
+	// Allocate aligned memory for blocks
+	raw, blocks := makeAlignedUint64Slice(int(numBlocks * BlockWords))
+
+	// Read block data
+	offset := headerSize
+	for i := range blocks {
+		blocks[i] = binary.LittleEndian.Uint64(data[offset : offset+8])
+		offset += 8
+	}
+
+	return &Filter{
+		raw:       raw,
+		blocks:    blocks,
+		numBlocks: numBlocks,
+		k:         k,
+		primes:    primes,
+		offsets:   ComputeOffsets(primes),
+		count:     count,
+	}, nil
 }
 
 // AtomicFilter is a thread-safe bloom filter using atomic operations.
