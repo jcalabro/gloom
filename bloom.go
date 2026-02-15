@@ -475,7 +475,7 @@ func NewShardedAtomicDefault(expectedItems uint64, fpRate float64) *ShardedAtomi
 func (f *ShardedAtomicFilter) Add(data []byte) {
 	h := hashRaw(data)
 	shard := f.shards[f.shardIndex(h)]
-	blockIdx, intraHash := hashSplitWithHash(h, shard.numBlocks)
+	blockIdx, intraHash := hashSplitSharded(h, shard.numBlocks)
 	shard.addWithHash(blockIdx, intraHash)
 }
 
@@ -483,7 +483,7 @@ func (f *ShardedAtomicFilter) Add(data []byte) {
 func (f *ShardedAtomicFilter) AddString(s string) {
 	h := hashRawString(s)
 	shard := f.shards[f.shardIndex(h)]
-	blockIdx, intraHash := hashSplitWithHash(h, shard.numBlocks)
+	blockIdx, intraHash := hashSplitSharded(h, shard.numBlocks)
 	shard.addWithHash(blockIdx, intraHash)
 }
 
@@ -491,7 +491,7 @@ func (f *ShardedAtomicFilter) AddString(s string) {
 func (f *ShardedAtomicFilter) Test(data []byte) bool {
 	h := hashRaw(data)
 	shard := f.shards[f.shardIndex(h)]
-	blockIdx, intraHash := hashSplitWithHash(h, shard.numBlocks)
+	blockIdx, intraHash := hashSplitSharded(h, shard.numBlocks)
 	return shard.testWithHash(blockIdx, intraHash)
 }
 
@@ -499,14 +499,15 @@ func (f *ShardedAtomicFilter) Test(data []byte) bool {
 func (f *ShardedAtomicFilter) TestString(s string) bool {
 	h := hashRawString(s)
 	shard := f.shards[f.shardIndex(h)]
-	blockIdx, intraHash := hashSplitWithHash(h, shard.numBlocks)
+	blockIdx, intraHash := hashSplitSharded(h, shard.numBlocks)
 	return shard.testWithHash(blockIdx, intraHash)
 }
 
 // shardIndex extracts the shard index from a hash value.
-// Uses bits 48-63 to avoid correlation with block selection (bits 32-47).
+// Uses bits 32-47, which are non-overlapping with block selection (bits 48-63)
+// and intra-block hashing (bits 0-31).
 func (f *ShardedAtomicFilter) shardIndex(h uint64) uint64 {
-	return (h >> 48) & f.mask
+	return (h >> 32) & f.mask
 }
 
 // Cap returns the total capacity of all shards in bits.

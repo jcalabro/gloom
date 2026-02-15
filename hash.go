@@ -36,7 +36,11 @@ func hashRawString(s string) uint64 {
 	return xxh3.HashString(s)
 }
 
-// hashSplitWithHash splits a pre-computed hash into block index and intra-block hash.
-func hashSplitWithHash(h uint64, numBlocks uint64) (blockIdx uint64, intraHash uint32) {
-	return hashSplit(h, numBlocks)
+// hashSplitSharded splits a pre-computed hash for use in the sharded filter.
+// Uses bits 48-63 for block selection (bits 32-47 are reserved for shard selection)
+// to avoid correlation between shard assignment and block selection.
+func hashSplitSharded(h uint64, numBlocks uint64) (blockIdx uint64, intraHash uint32) {
+	blockIdx = (h >> 48) % numBlocks
+	intraHash = uint32(h)
+	return
 }
