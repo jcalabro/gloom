@@ -236,9 +236,9 @@ func TestPrimePartitions(t *testing.T) {
 			sum += p
 		}
 
-		// Sum should be close to 512
-		if sum < 500 || sum > 520 {
-			t.Errorf("k=%d: prime sum=%d, expected ~512", k, sum)
+		// Sum must be exactly 512 to fill the block without overflow
+		if sum != 512 {
+			t.Errorf("k=%d: prime sum=%d, expected exactly 512", k, sum)
 		}
 
 		t.Logf("k=%d: primes=%v, sum=%d", k, primes, sum)
@@ -377,6 +377,9 @@ func TestNextPowerOf2(t *testing.T) {
 		{15, 16},
 		{16, 16},
 		{17, 32},
+		{1 << 62, 1 << 62},
+		{1<<63 + 1, 1 << 63},  // overflow guard
+		{^uint64(0), 1 << 63}, // max uint64
 	}
 
 	for _, tt := range tests {

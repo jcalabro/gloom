@@ -417,13 +417,18 @@ func (f *AtomicFilter) NumBlocks() uint64 {
 	return f.numBlocks
 }
 
-// EstimatedFillRatio estimates the proportion of bits that are set.
-func (f *AtomicFilter) EstimatedFillRatio() float64 {
+// setBitCount returns the number of bits set in the filter.
+func (f *AtomicFilter) setBitCount() uint64 {
 	var setBits uint64
 	for i := range f.blocks {
 		setBits += uint64(bits.OnesCount64(f.blocks[i].Load()))
 	}
-	return float64(setBits) / float64(f.numBlocks*BlockBits)
+	return setBits
+}
+
+// EstimatedFillRatio estimates the proportion of bits that are set.
+func (f *AtomicFilter) EstimatedFillRatio() float64 {
+	return float64(f.setBitCount()) / float64(f.numBlocks*BlockBits)
 }
 
 // EstimatedFalsePositiveRate estimates the current false positive rate.
@@ -552,7 +557,7 @@ func (f *ShardedAtomicFilter) EstimatedFillRatio() float64 {
 	var totalBits, setBits uint64
 	for _, shard := range f.shards {
 		totalBits += shard.Cap()
-		setBits += uint64(float64(shard.Cap()) * shard.EstimatedFillRatio())
+		setBits += shard.setBitCount()
 	}
 	// totalBits is always > 0 since shards always have capacity
 	return float64(setBits) / float64(totalBits)
@@ -569,9 +574,13 @@ func (f *ShardedAtomicFilter) EstimatedFalsePositiveRate() float64 {
 }
 
 // nextPowerOf2 returns the smallest power of 2 >= n.
+// For n > 1<<63, returns 1<<63 (the largest power of 2 in uint64).
 func nextPowerOf2(n uint64) uint64 {
 	if n == 0 {
 		return 1
+	}
+	if n > 1<<63 {
+		return 1 << 63
 	}
 	n--
 	n |= n >> 1
