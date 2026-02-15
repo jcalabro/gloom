@@ -13,46 +13,32 @@ const (
 	ln2Squared = 0.4804530139182014
 )
 
-// primePartitions contains pre-computed prime partition configurations for
-// different k values. Each configuration contains k distinct primes that sum
-// to approximately 512 bits (the block size).
+// primePartitions contains pre-computed partition configurations for different
+// k values. Each configuration contains k strictly distinct values that sum to
+// exactly 512 bits (the block size).
 //
-// The primes are chosen to be:
-// 1. Distinct (required for one-hashing independence)
-// 2. Sum close to 512 to maximize block utilization
-// 3. Reasonably balanced in size
+// For even k values, all values are distinct primes.
+// For odd k values, one value must be even (and thus non-prime, since 2 is too
+// small for good modulo distribution) because the sum of an odd count of odd
+// numbers is always odd, but the target sum (512) is even.
+//
+// The values are chosen to be:
+// 1. Strictly distinct (required for one-hashing independence)
+// 2. Sum to exactly 512 to maximize block utilization
+// 3. As large as possible for good modulo distribution
 var primePartitions = map[uint32][]uint32{
-	3:  {167, 173, 172},                                          // sum = 512 (172 is not prime but close enough, using 167+173+172=512)
-	4:  {127, 131, 127, 127},                                     // sum = 512, note: repeated primes reduce independence slightly
-	5:  {101, 103, 107, 109, 92},                                 // sum = 512
-	6:  {83, 89, 97, 101, 103, 39},                               // sum = 512
-	7:  {71, 73, 79, 83, 67, 71, 68},                             // sum = 512
-	8:  {61, 67, 71, 73, 59, 61, 59, 61},                         // sum = 512
-	9:  {53, 59, 61, 67, 53, 59, 53, 53, 54},                     // sum = 512
-	10: {47, 53, 59, 61, 47, 53, 47, 47, 47, 51},                 // sum = 512
-	11: {43, 47, 53, 59, 43, 47, 43, 43, 43, 47, 44},             // sum = 512
-	12: {41, 43, 47, 53, 41, 43, 41, 41, 41, 41, 41, 39},         // sum = 512
-	13: {37, 41, 43, 47, 37, 41, 37, 37, 37, 41, 37, 37, 40},     // sum = 512
-	14: {37, 37, 41, 43, 37, 37, 37, 37, 37, 37, 37, 37, 37, 32}, // sum = 512
-}
-
-// Recompute with strictly distinct primes for better independence.
-// These are carefully chosen distinct primes that sum to exactly or close to 512.
-func init() {
-	primePartitions = map[uint32][]uint32{
-		3:  {167, 173, 172},                                          // 512 (172 used as filler)
-		4:  {127, 131, 137, 117},                                     // 512
-		5:  {101, 103, 107, 109, 92},                                 // 512
-		6:  {79, 83, 89, 97, 101, 63},                                // 512
-		7:  {67, 71, 73, 79, 83, 89, 50},                             // 512
-		8:  {59, 61, 67, 71, 73, 79, 53, 49},                         // 512
-		9:  {53, 59, 61, 67, 71, 73, 47, 43, 38},                     // 512
-		10: {47, 53, 59, 61, 67, 71, 43, 41, 37, 33},                 // 512
-		11: {43, 47, 53, 59, 61, 67, 41, 37, 31, 29, 44},             // 512
-		12: {41, 43, 47, 53, 59, 61, 37, 31, 29, 23, 47, 41},         // 512
-		13: {37, 41, 43, 47, 53, 59, 31, 29, 23, 19, 53, 41, 36},     // 512
-		14: {37, 41, 43, 47, 53, 29, 31, 23, 19, 17, 59, 37, 41, 35}, // 512
-	}
+	3:  {167, 173, 172},                                          // sum = 512 (172 is even filler)
+	4:  {109, 127, 137, 139},                                     // sum = 512, all prime
+	5:  {97, 101, 103, 109, 102},                                 // sum = 512 (102 is even filler)
+	6:  {61, 79, 83, 89, 97, 103},                                // sum = 512, all prime
+	7:  {61, 67, 71, 79, 83, 89, 62},                             // sum = 512 (62 is even filler)
+	8:  {37, 47, 53, 61, 67, 71, 79, 97},                         // sum = 512, all prime
+	9:  {41, 43, 47, 53, 59, 67, 71, 73, 58},                     // sum = 512 (58 is even filler)
+	10: {31, 37, 41, 43, 47, 53, 59, 61, 67, 73},                 // sum = 512, all prime
+	11: {29, 31, 37, 41, 43, 44, 47, 53, 59, 61, 67},             // sum = 512 (44 is even filler)
+	12: {17, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 71},         // sum = 512, all prime
+	13: {17, 19, 23, 29, 31, 37, 41, 43, 47, 52, 53, 59, 61},     // sum = 512 (52 is even filler)
+	14: {11, 13, 17, 19, 23, 29, 31, 37, 41, 47, 53, 59, 61, 71}, // sum = 512, all prime
 }
 
 // OptimalParams calculates the optimal bloom filter parameters.
