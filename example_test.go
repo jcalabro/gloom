@@ -232,5 +232,5 @@ func ExampleEstimateFalsePositiveRate() {
 	fmt.Printf("Estimated FP rate: %.2f%%\n", rate*100)
 
 	// Output:
-	// Estimated FP rate: 0.73%
+	// Estimated FP rate: 0.86%
 }

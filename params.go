@@ -96,16 +96,58 @@ func ComputeOffsets(primes []uint32) []uint32 {
 }
 
 // EstimateFalsePositiveRate estimates the false positive rate for given parameters.
-// Formula: (1 - e^(-kn/m))^k
+//
+// For a cache-line blocked bloom filter, items are distributed across blocks
+// following a Poisson distribution (balls-into-bins). Some blocks receive more
+// items than average, increasing their local FP rate. This function computes
+// the expected per-block FP rate over this Poisson distribution:
+//
+//	FP = E[(1 - e^(-k*J/s))^k]  where J ~ Poisson(n/B), s = BlockBits
+//
+// This gives a more accurate estimate than the standard formula (1 - e^(-kn/m))^k,
+// which assumes uniform bit placement and underestimates the FP rate of blocked filters.
 func EstimateFalsePositiveRate(numBlocks uint64, k uint32, itemsAdded uint64) float64 {
-	m := float64(numBlocks * BlockBits)
-	n := float64(itemsAdded)
-	kf := float64(k)
-
-	if m == 0 || n == 0 {
+	if numBlocks == 0 || itemsAdded == 0 {
 		return 0
 	}
 
-	// (1 - e^(-kn/m))^k
-	return math.Pow(1-math.Exp(-kf*n/m), kf)
+	lambda := float64(itemsAdded) / float64(numBlocks) // expected items per block
+	s := float64(BlockBits)
+	kf := float64(k)
+
+	// For very large lambda, the Poisson variance relative to the mean is
+	// negligible and the standard formula is a good approximation.
+	if lambda > 10000 {
+		m := float64(numBlocks) * s
+		return math.Pow(1-math.Exp(-kf*float64(itemsAdded)/m), kf)
+	}
+
+	// Compute Poisson-weighted sum: sum over j of P(J=j) * (1 - e^(-k*j/s))^k
+	// Use log-space for Poisson probabilities to avoid overflow/underflow.
+	maxJ := int(lambda + 10*math.Sqrt(lambda) + 20)
+	var fp float64
+	var logFactorial float64 // log(j!)
+	logLambda := math.Log(lambda)
+
+	for j := 0; j <= maxJ; j++ {
+		if j > 0 {
+			logFactorial += math.Log(float64(j))
+		}
+
+		// log(P(J=j)) = -lambda + j*log(lambda) - log(j!)
+		logProb := -lambda + float64(j)*logLambda - logFactorial
+		prob := math.Exp(logProb)
+
+		if prob < 1e-15 && j > int(lambda) {
+			break
+		}
+
+		// Per-block FP rate with j items: (1 - e^(-k*j/s))^k
+		// When j=0 this is 0, skip to avoid unnecessary computation.
+		if j > 0 {
+			fp += prob * math.Pow(1-math.Exp(-kf*float64(j)/s), kf)
+		}
+	}
+
+	return fp
 }

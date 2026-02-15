@@ -246,22 +246,31 @@ func TestPrimePartitions(t *testing.T) {
 }
 
 func TestEstimateFalsePositiveRate(t *testing.T) {
-	// Test against known formula
+	// Test that the blocked formula gives a higher estimate than the standard
+	// formula, since Poisson variance across blocks increases FP rate.
 	numBlocks := uint64(100)
 	k := uint32(7)
 	items := uint64(5000)
 
 	estimated := EstimateFalsePositiveRate(numBlocks, k, items)
 
-	// Manual calculation: (1 - e^(-kn/m))^k
+	// Standard (non-blocked) formula: (1 - e^(-kn/m))^k
 	m := float64(numBlocks * BlockBits)
 	n := float64(items)
 	kf := float64(k)
-	expected := math.Pow(1-math.Exp(-kf*n/m), kf)
+	standard := math.Pow(1-math.Exp(-kf*n/m), kf)
 
-	if math.Abs(estimated-expected) > 0.0001 {
-		t.Errorf("estimated=%f, expected=%f", estimated, expected)
+	// Blocked estimate should be >= standard (Jensen's inequality)
+	if estimated < standard {
+		t.Errorf("blocked estimate (%f) should be >= standard formula (%f)", estimated, standard)
 	}
+
+	// Should be reasonably close (within 2x for typical parameters)
+	if estimated > standard*2 {
+		t.Errorf("blocked estimate (%f) is unreasonably higher than standard (%f)", estimated, standard)
+	}
+
+	t.Logf("standard=%f, blocked=%f, ratio=%.2fx", standard, estimated, estimated/standard)
 }
 
 func TestFilterWithDifferentKValues(t *testing.T) {
@@ -615,6 +624,13 @@ func TestEstimateFalsePositiveRateEdgeCases(t *testing.T) {
 	rate = EstimateFalsePositiveRate(0, 7, 1000)
 	if rate != 0 {
 		t.Errorf("expected 0 FP rate for 0 blocks, got %f", rate)
+	}
+
+	// Test with very high lambda (> 10000) to exercise the fast path
+	// 1 block with 20000 items => lambda = 20000
+	rate = EstimateFalsePositiveRate(1, 7, 20000)
+	if rate <= 0 || rate > 1 {
+		t.Errorf("expected valid FP rate for high lambda, got %f", rate)
 	}
 }
 
