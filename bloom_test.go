@@ -635,6 +635,20 @@ func TestEstimateFalsePositiveRateEdgeCases(t *testing.T) {
 	if rate <= 0 || rate > 1 {
 		t.Errorf("expected valid FP rate for high lambda, got %f", rate)
 	}
+
+	// Test with unsupported k value (no prime partition) to exercise
+	// the standard formula fallback paths.
+	// Normal lambda path (primes == nil fallback in Poisson loop)
+	rate = EstimateFalsePositiveRate(100, 20, 5000)
+	if rate <= 0 || rate > 1 {
+		t.Errorf("expected valid FP rate for unsupported k, got %f", rate)
+	}
+
+	// High lambda path (primes == nil fallback in fast path)
+	rate = EstimateFalsePositiveRate(1, 20, 20000)
+	if rate <= 0 || rate > 1 {
+		t.Errorf("expected valid FP rate for unsupported k with high lambda, got %f", rate)
+	}
 }
 
 func TestGetPrimePartitionInvalid(t *testing.T) {
@@ -962,13 +976,14 @@ func TestNoFalseNegativesUnderStress(t *testing.T) {
 		name     string
 		items    uint64
 		fpRate   float64
+		atomic   bool
 		sharded  bool
 		numTests int
 	}{
-		{"Filter 100k items", 100000, 0.01, false, 3},
-		{"AtomicFilter 100k items", 100000, 0.01, false, 3},
-		{"ShardedAtomicFilter 100k items", 100000, 0.01, true, 3},
-		{"Filter 1M items", 1000000, 0.01, false, 1},
+		{"Filter 100k items", 100000, 0.01, false, false, 3},
+		{"AtomicFilter 100k items", 100000, 0.01, true, false, 3},
+		{"ShardedAtomicFilter 100k items", 100000, 0.01, false, true, 3},
+		{"Filter 1M items", 1000000, 0.01, false, false, 1},
 	}
 
 	for _, tc := range testCases {
@@ -981,7 +996,7 @@ func TestNoFalseNegativesUnderStress(t *testing.T) {
 					f := NewShardedAtomic(tc.items, tc.fpRate, 16)
 					addFunc = f.Add
 					testFunc = f.Test
-				} else if tc.name[0] == 'A' { // AtomicFilter
+				} else if tc.atomic {
 					f := NewAtomic(tc.items, tc.fpRate)
 					addFunc = f.Add
 					testFunc = f.Test

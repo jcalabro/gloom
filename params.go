@@ -95,39 +95,65 @@ func ComputeOffsets(primes []uint32) []uint32 {
 	return offsets
 }
 
+// partitionedBlockFP computes the false positive rate for a single block
+// containing j items using the partitioned one-hashing scheme.
+//
+// Each partition i has size primes[i], and j items each set one bit uniformly
+// in that partition. The probability that a random query finds partition i's
+// probe bit already set is 1 - (1 - 1/p_i)^j. Since partitions are independent,
+// the overall FP rate is the product across all partitions.
+func partitionedBlockFP(primes []uint32, j float64) float64 {
+	fp := 1.0
+	for _, p := range primes {
+		fp *= 1 - math.Pow(1-1/float64(p), j)
+	}
+	return fp
+}
+
 // EstimateFalsePositiveRate estimates the false positive rate for given parameters.
 //
 // For a cache-line blocked bloom filter, items are distributed across blocks
 // following a Poisson distribution (balls-into-bins). Some blocks receive more
 // items than average, increasing their local FP rate. This function computes
-// the expected per-block FP rate over this Poisson distribution:
+// the expected per-block FP rate over this Poisson distribution using the
+// partitioned formula that accounts for the actual prime partition sizes:
 //
-//	FP = E[(1 - e^(-k*J/s))^k]  where J ~ Poisson(n/B), s = BlockBits
+//	FP = E[∏ᵢ (1 - (1 - 1/pᵢ)^J)]  where J ~ Poisson(n/B)
 //
-// This gives a more accurate estimate than the standard formula (1 - e^(-kn/m))^k,
-// which assumes uniform bit placement and underestimates the FP rate of blocked filters.
+// This is more accurate than the standard formula (1 - e^(-kn/m))^k, which
+// assumes uniform bit placement across the entire block and underestimates
+// the FP rate of partitioned blocked filters.
 func EstimateFalsePositiveRate(numBlocks uint64, k uint32, itemsAdded uint64) float64 {
 	if numBlocks == 0 || itemsAdded == 0 {
 		return 0
 	}
 
+	primes := GetPrimePartition(k)
 	lambda := float64(itemsAdded) / float64(numBlocks) // expected items per block
-	s := float64(BlockBits)
-	kf := float64(k)
 
 	// For very large lambda, the Poisson variance relative to the mean is
-	// negligible and the standard formula is a good approximation.
+	// negligible and we can evaluate directly at the mean.
 	if lambda > 10000 {
+		if primes != nil {
+			return partitionedBlockFP(primes, lambda)
+		}
+		// Fallback for unsupported k values
+		s := float64(BlockBits)
+		kf := float64(k)
 		m := float64(numBlocks) * s
 		return math.Pow(1-math.Exp(-kf*float64(itemsAdded)/m), kf)
 	}
 
-	// Compute Poisson-weighted sum: sum over j of P(J=j) * (1 - e^(-k*j/s))^k
+	// Compute Poisson-weighted sum: sum over j of P(J=j) * blockFP(j)
 	// Use log-space for Poisson probabilities to avoid overflow/underflow.
 	maxJ := int(lambda + 10*math.Sqrt(lambda) + 20)
 	var fp float64
 	var logFactorial float64 // log(j!)
 	logLambda := math.Log(lambda)
+
+	// Precompute fallback values for unsupported k
+	kf := float64(k)
+	s := float64(BlockBits)
 
 	for j := 0; j <= maxJ; j++ {
 		if j > 0 {
@@ -142,10 +168,16 @@ func EstimateFalsePositiveRate(numBlocks uint64, k uint32, itemsAdded uint64) fl
 			break
 		}
 
-		// Per-block FP rate with j items: (1 - e^(-k*j/s))^k
+		// Per-block FP rate with j items.
 		// When j=0 this is 0, skip to avoid unnecessary computation.
 		if j > 0 {
-			fp += prob * math.Pow(1-math.Exp(-kf*float64(j)/s), kf)
+			var blockFP float64
+			if primes != nil {
+				blockFP = partitionedBlockFP(primes, float64(j))
+			} else {
+				blockFP = math.Pow(1-math.Exp(-kf*float64(j)/s), kf)
+			}
+			fp += prob * blockFP
 		}
 	}
 
