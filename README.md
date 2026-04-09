@@ -245,13 +245,11 @@ Sample output (Add operations on the same hardware as above):
 
 ```bash
 # Using https://github.com/casey/just
-just # runs the linter and short tests with the race detector enabled
+just           # runs the linter and short tests
 
-just test
-just t # runs without the race detector
-
-just test-long
-just t-long
+just test      # short tests, no race detector
+just test-race # short tests, with race detector
+just test-long # all tests including long-running ones
 
 just bench
 just bench-long

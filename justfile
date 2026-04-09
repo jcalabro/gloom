@@ -1,24 +1,24 @@
 set shell := ["bash", "-cu"]
 
-# Lints and runs all tests
+# Lints and runs short tests with the race detector
 default: lint test
 
 # Lints the code
 lint *ARGS="./...":
     golangci-lint run --timeout 5m {{ARGS}}
 
-# Runs the tests (short)
-t *ARGS="./...":
-    go test -short -v -count=1 -covermode=atomic -coverprofile=test-coverage.out {{ARGS}}
-
-# Runs the tests with the race detector enabled (short)
+# Runs the tests (short, no race detector)
 test *ARGS="./...":
-    just t -race {{ARGS}}
+    go test -short -count=1 {{ARGS}}
+alias t := test
 
-# Runs the tests (long)
-alias test-long := t-long
-t-long *ARGS="./...":
-    go test -v -count=1 -covermode=atomic -coverprofile=test-coverage.out {{ARGS}}
+# Runs the tests with the race detector (short)
+test-race *ARGS="./...":
+    go test -short -count=1 -race {{ARGS}}
+
+# Runs all tests including long-running ones (no race detector)
+test-long *ARGS="./...":
+    go test -count=1 {{ARGS}}
 
 # Runs benchmarks (in benchmarks/ submodule)
 bench *ARGS="./...":
