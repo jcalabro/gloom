@@ -27,3 +27,13 @@ bench *ARGS="./...":
 # Runs benchmarks with longer duration for accurate results
 bench-long *ARGS="./...":
     just bench -benchtime=3s -count=3 {{ARGS}}
+
+# Runs all analysis experiments and generates charts
+analysis:
+    cd cmd/analysis && go run . -all
+    cd cmd/analysis && for f in plots/*.gnuplot; do gnuplot "$f"; done
+
+# Runs a single analysis chart (e.g., just analysis-chart fp-vs-k)
+analysis-chart NAME:
+    cd cmd/analysis && go run . -chart={{NAME}}
+    cd cmd/analysis && gnuplot plots/{{NAME}}.gnuplot
