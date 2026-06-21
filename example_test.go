@@ -123,10 +123,10 @@ func Example_statistics() {
 	fmt.Printf("Fill ratio: %.1f%%\n", f.EstimatedFillRatio()*100)
 
 	// Output:
-	// Capacity: 96256 bits
+	// Capacity: 108544 bits
 	// Hash functions (k): 7
 	// Items added: 5000
-	// Fill ratio: 30.3%
+	// Fill ratio: 27.4%
 }
 
 // This example demonstrates creating a filter with explicit parameters.
@@ -217,7 +217,7 @@ func ExampleOptimalParams() {
 
 	// Output:
 	// For 1M items at 1% FP rate:
-	//   Blocks: 18721
+	//   Blocks: 21062
 	//   Hash functions (k): 7
 	//   Bits per item: 9.6
 }

@@ -213,14 +213,14 @@ func TestOptimalParams(t *testing.T) {
 			tt.items, tt.fpRate, numBlocks, k, bpi)
 
 		// k should be in reasonable range
-		if k < 3 || k > 14 {
-			t.Errorf("k=%d out of supported range [3,14]", k)
+		if k < minK || k > maxK {
+			t.Errorf("k=%d out of supported range", k)
 		}
 	}
 }
 
 func TestPrimePartitions(t *testing.T) {
-	for k := uint32(3); k <= 14; k++ {
+	for k := uint32(minK); k <= maxK; k++ {
 		primes := GetPrimePartition(k)
 		if primes == nil {
 			t.Errorf("no partition for k=%d", k)
@@ -236,13 +236,74 @@ func TestPrimePartitions(t *testing.T) {
 			sum += p
 		}
 
-		// Sum must be exactly 512 to fill the block without overflow
+		// Sum must be exactly 512 to fill the block without overflow.
 		if sum != 512 {
-			t.Errorf("k=%d: prime sum=%d, expected exactly 512", k, sum)
+			t.Errorf("k=%d: partition sum=%d, expected exactly 512", k, sum)
 		}
 
-		t.Logf("k=%d: primes=%v, sum=%d", k, primes, sum)
+		// Parts must be pairwise coprime AND distinct. Pairwise coprimality is the
+		// actual one-hashing independence requirement (distinctness is implied by it
+		// for values > 1, since equal values share a common factor).
+		for i := range primes {
+			if primes[i] < 2 {
+				t.Errorf("k=%d: partition contains %d, must be >= 2", k, primes[i])
+			}
+			for j := i + 1; j < len(primes); j++ {
+				if g := gcdU32(primes[i], primes[j]); g != 1 {
+					t.Errorf("k=%d: parts %d and %d are not coprime (gcd=%d)",
+						k, primes[i], primes[j], g)
+				}
+			}
+		}
+
+		t.Logf("k=%d: partition=%v, sum=%d", k, primes, sum)
 	}
+
+	// The supported range must be exactly [minK, maxK] with no gaps and nothing outside.
+	for k := range uint32(minK) {
+		if GetPrimePartition(k) != nil {
+			t.Errorf("k=%d below minK should have no partition", k)
+		}
+	}
+	if GetPrimePartition(maxK+1) != nil {
+		t.Errorf("k=%d above maxK should have no partition", maxK+1)
+	}
+}
+
+func gcdU32(a, b uint32) uint32 {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
+func TestAchievableFalsePositiveRate(t *testing.T) {
+	// At these target rates the 512-bit block can meet the target once OptimalParams
+	// compensates for the blocking penalty, so met must be true and the realized rate at
+	// or below target.
+	for _, fp := range []float64{0.1, 0.01, 0.001, 0.0001, 0.00001} {
+		achievable, met := AchievableFalsePositiveRate(1_000_000, fp)
+		if achievable <= 0 || achievable >= 1 {
+			t.Errorf("fp=%.0e: achievable %.3e out of (0,1)", fp, achievable)
+		}
+		if !met {
+			t.Errorf("fp=%.0e: expected target to be met, achievable=%.3e", fp, achievable)
+		}
+	}
+
+	// At an extreme target, the 512-bit block structure cannot meet the rate even at the
+	// block-growth cap, so the shortfall must be reported (met=false) rather than silently
+	// accepted.
+	const extreme = 1e-12
+	achievable, met := AchievableFalsePositiveRate(1_000_000, extreme)
+	if met {
+		t.Errorf("fp=%.0e: expected shortfall (block-growth capped), but reported met with %.3e",
+			extreme, achievable)
+	}
+	if achievable <= extreme {
+		t.Errorf("fp=%.0e: achievable %.3e should exceed the unattainable target", extreme, achievable)
+	}
+	t.Logf("fp=%.0e unattainable: achievable=%.3e", extreme, achievable)
 }
 
 func TestEstimateFalsePositiveRate(t *testing.T) {
@@ -274,7 +335,7 @@ func TestEstimateFalsePositiveRate(t *testing.T) {
 }
 
 func TestFilterWithDifferentKValues(t *testing.T) {
-	for k := uint32(3); k <= 14; k++ {
+	for k := uint32(minK); k <= maxK; k++ {
 		f := NewWithParams(100, k)
 
 		// Add some items
@@ -436,7 +497,7 @@ func TestAtomicFilterCap(t *testing.T) {
 func TestAtomicFilterK(t *testing.T) {
 	f := NewAtomic(1000, 0.01)
 	k := f.K()
-	if k < 3 || k > 14 {
+	if k < minK || k > maxK {
 		t.Errorf("K() = %d, expected between 3 and 14", k)
 	}
 }
@@ -493,7 +554,7 @@ func TestShardedAtomicFilterCap(t *testing.T) {
 func TestShardedAtomicFilterK(t *testing.T) {
 	f := NewShardedAtomic(1000, 0.01, 4)
 	k := f.K()
-	if k < 3 || k > 14 {
+	if k < minK || k > maxK {
 		t.Errorf("K() = %d, expected between 3 and 14", k)
 	}
 }
@@ -581,16 +642,16 @@ func TestOptimalParamsEdgeCases(t *testing.T) {
 		t.Error("expected non-zero params for 1 item")
 	}
 
-	// Test with very low FP rate (should cap k at 14)
+	// Test with very low FP rate (should cap k at maxK)
 	_, k, _ = OptimalParams(1000, 0.0000001)
-	if k > 14 {
-		t.Errorf("expected k <= 14, got %d", k)
+	if k > maxK {
+		t.Errorf("expected k <= %d, got %d", maxK, k)
 	}
 
-	// Test with very high FP rate (should have low k, clamped to 3)
+	// Test with very high FP rate (should have low k, clamped to minK)
 	_, k, _ = OptimalParams(1000, 0.5)
-	if k < 3 {
-		t.Errorf("expected k >= 3, got %d", k)
+	if k < minK {
+		t.Errorf("expected k >= %d, got %d", minK, k)
 	}
 
 	// Test with fpRate <= 0 (should default to 0.0001)
@@ -659,8 +720,8 @@ func TestGetPrimePartitionInvalid(t *testing.T) {
 	if GetPrimePartition(2) != nil {
 		t.Error("expected nil for k=2")
 	}
-	if GetPrimePartition(15) != nil {
-		t.Error("expected nil for k=15")
+	if GetPrimePartition(maxK+1) != nil {
+		t.Errorf("expected nil for k=%d (above maxK)", maxK+1)
 	}
 }
 
@@ -833,7 +894,7 @@ func testFilterFPRate(t *testing.T, capacity uint64, targetFP, loadFactor float6
 	}
 
 	observedFP := float64(falsePositives) / float64(testItems)
-	validateFPRate(t, observedFP, targetFP, loadFactor, testItems)
+	validateFPRate(t, observedFP, targetFP, loadFactor, capacity, testItems)
 }
 
 func testAtomicFilterFPRate(t *testing.T, capacity uint64, targetFP, loadFactor float64) {
@@ -859,7 +920,7 @@ func testAtomicFilterFPRate(t *testing.T, capacity uint64, targetFP, loadFactor 
 	}
 
 	observedFP := float64(falsePositives) / float64(testItems)
-	validateFPRate(t, observedFP, targetFP, loadFactor, testItems)
+	validateFPRate(t, observedFP, targetFP, loadFactor, capacity, testItems)
 }
 
 func testShardedAtomicFilterFPRate(t *testing.T, capacity uint64, targetFP, loadFactor float64) {
@@ -885,83 +946,47 @@ func testShardedAtomicFilterFPRate(t *testing.T, capacity uint64, targetFP, load
 	}
 
 	observedFP := float64(falsePositives) / float64(testItems)
-	validateFPRate(t, observedFP, targetFP, loadFactor, testItems)
+	validateFPRate(t, observedFP, targetFP, loadFactor, capacity, testItems)
 }
 
-// validateFPRate checks if observed FP rate is within statistical bounds
-func validateFPRate(t *testing.T, observedFP, targetFP, loadFactor float64, testItems uint64) {
+// validateFPRate checks the observed FP rate against a principled UPPER bound.
+//
+// A bloom filter's contract is one-sided: the realized FP rate must not meaningfully
+// EXCEED what the parameters imply (a rate below target is always fine). We therefore
+// compare the observed rate to the model's own prediction for the actual number of items
+// added, derived from the filter's parameters, plus a statistical allowance for the finite
+// number of probes. This is a real, falsifiable check (it caught the block-selection cliff
+// at scale and would catch a mis-sizing), unlike a symmetric band wide enough to admit
+// almost any value.
+func validateFPRate(t *testing.T, observedFP, targetFP, loadFactor float64, capacity, testItems uint64) {
 	t.Helper()
 
-	// The target FP rate is calibrated for 100% load. At different load levels,
-	// we need to estimate the expected FP rate using the bloom filter formula:
-	// FP ≈ (1 - e^(-k*n/m))^k
-	//
-	// Since we don't have direct access to k, m here, we use an approximation:
-	// At load factor L, the expected FP rate scales roughly as targetFP^(1/L) for L<1
-	// and targetFP*L^2 for L>1
+	// Predicted FP at the actual load, using the same blocked+partitioned model the library
+	// exposes, with parameters reconstructed from the target rate and capacity. This is the
+	// rate we expect to observe modulo sampling noise.
+	numBlocks, k, _ := OptimalParams(capacity, targetFP)
+	itemsAdded := uint64(float64(capacity) * loadFactor)
+	predicted := EstimateFalsePositiveRate(numBlocks, k, itemsAdded)
 
-	var expectedFP float64
-	switch {
-	case loadFactor <= 0.1:
-		// At very low load, FP rate is essentially 0
-		expectedFP = 0.0
-	case loadFactor < 1.0:
-		// FP rate scales roughly with fill ratio raised to power k
-		// Since k is typically 7-10, and fill ratio ~ loadFactor,
-		// FP ≈ targetFP * loadFactor^k ≈ targetFP * loadFactor^7
-		expectedFP = targetFP * math.Pow(loadFactor, 7)
-	case loadFactor == 1.0:
-		expectedFP = targetFP
-	default:
-		// When overfilled, FP rate increases as more bits get set
-		expectedFP = math.Min(1.0, targetFP*loadFactor*loadFactor)
-	}
+	// One-sided statistical allowance: with `probes` independent queries at true rate p, the
+	// observed count is Binomial(probes, p). Allow the predicted rate plus 6 standard
+	// deviations, with a small floor so very-low-rate tests tolerate a few chance hits.
+	// Six sigma (vs the textbook 3-4) absorbs two model approximations that bias realized
+	// FP slightly above the whole-filter prediction: per-shard capacity rounding in the
+	// sharded filter, and the Poisson-vs-binomial block-load approximation. It is still a
+	// genuinely falsifiable upper bound — a real regression (e.g. the block-selection cliff)
+	// blows past it by orders of magnitude.
+	probes := float64(testItems)
+	p := math.Max(predicted, 1.0/probes)
+	stdDev := math.Sqrt(p * (1 - p) / probes)
+	upperBound := math.Max(predicted+6*stdDev, 5.0/probes)
 
-	// Calculate confidence interval using normal approximation to binomial
-	// Standard deviation of sample proportion: sqrt(p*(1-p)/n)
-	// Use a reasonable estimate for p in variance calculation
-	pForVariance := math.Max(expectedFP, 0.001) // Avoid division issues at very low rates
-	stdDev := math.Sqrt(pForVariance * (1 - pForVariance) / float64(testItems))
+	t.Logf("load=%.0f%% observed=%.5f predicted=%.5f upper=%.5f (probes=%d)",
+		loadFactor*100, observedFP, predicted, upperBound, testItems)
 
-	// Use 4 standard deviations for 99.99% confidence
-	margin := 4 * stdDev
-
-	// For very low expected FP rates, use a minimum margin based on sample size
-	// With 10000 samples, we might see 0-2 false positives by chance
-	minMargin := 3.0 / float64(testItems) // Allow up to 3 FPs on low-rate tests
-	if margin < minMargin {
-		margin = minMargin
-	}
-
-	// Be more generous for low FP rate targets where relative variance is higher
-	// Allow up to 3x the target rate for very low targets
-	if targetFP <= 0.01 {
-		margin = math.Max(margin, targetFP*2.0)
-	}
-
-	// Be more generous with the margin for non-100% load tests
-	if loadFactor != 1.0 {
-		margin = math.Max(margin, targetFP*0.5) // Allow 50% relative error
-	}
-
-	lowerBound := math.Max(0, expectedFP-margin)
-	upperBound := expectedFP + margin
-
-	t.Logf("load=%.0f%% observed=%.4f expected=%.4f bounds=[%.4f, %.4f]",
-		loadFactor*100, observedFP, expectedFP, lowerBound, upperBound)
-
-	// For overfilled case, we only check upper bound isn't absurdly high
-	if loadFactor > 1.0 {
-		if observedFP > 0.5 && loadFactor < 2.0 {
-			t.Errorf("FP rate too high for load factor: observed %.4f at %.0f%% load",
-				observedFP, loadFactor*100)
-		}
-		return
-	}
-
-	if observedFP < lowerBound || observedFP > upperBound {
-		t.Errorf("FP rate outside expected bounds: observed %.4f, expected %.4f +/- %.4f",
-			observedFP, expectedFP, margin)
+	if observedFP > upperBound {
+		t.Errorf("FP rate too high: observed %.5f exceeds upper bound %.5f (predicted %.5f) at %.0f%% load",
+			observedFP, upperBound, predicted, loadFactor*100)
 	}
 }
 
@@ -1602,7 +1627,7 @@ func TestPropertyShardedFilterEquivalence(t *testing.T) {
 // TestPropertyDifferentKValues verifies the filter works correctly with all
 // supported k values.
 func TestPropertyDifferentKValues(t *testing.T) {
-	for k := uint32(3); k <= 14; k++ {
+	for k := uint32(minK); k <= maxK; k++ {
 		t.Run(fmt.Sprintf("k_%d", k), func(t *testing.T) {
 			f := NewWithParams(100, k)
 

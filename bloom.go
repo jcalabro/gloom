@@ -240,7 +240,7 @@ func UnmarshalBinary(data []byte) (*Filter, error) {
 	// Validate k
 	primes := GetPrimePartition(k)
 	if primes == nil {
-		return nil, fmt.Errorf("%w: k=%d is not supported (valid range: 3-14)", ErrInvalidK, k)
+		return nil, fmt.Errorf("%w: k=%d is not supported (valid range: %d-%d)", ErrInvalidK, k, minK, maxK)
 	}
 
 	// Validate numBlocks to prevent overflow in subsequent calculations.

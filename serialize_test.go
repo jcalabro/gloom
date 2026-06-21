@@ -94,7 +94,7 @@ func TestSerializeRoundtripWithData(t *testing.T) {
 
 func TestSerializeRoundtripAllKValues(t *testing.T) {
 	// Test serialization with all supported k values
-	for k := uint32(3); k <= 14; k++ {
+	for k := uint32(minK); k <= maxK; k++ {
 		t.Run(fmt.Sprintf("k=%d", k), func(t *testing.T) {
 			original := NewWithParams(100, k)
 
@@ -236,8 +236,8 @@ func TestSerializeInvalidK(t *testing.T) {
 		t.Fatalf("MarshalBinary failed: %v", err)
 	}
 
-	// Test invalid k values
-	invalidKValues := []uint32{0, 1, 2, 15, 16, 100, 255}
+	// Test invalid k values (below minK=3 or above maxK=17)
+	invalidKValues := []uint32{0, 1, 2, 18, 19, 100, 255}
 	for _, invalidK := range invalidKValues {
 		dataCopy := make([]byte, len(data))
 		copy(dataCopy, data)
@@ -677,7 +677,7 @@ func FuzzSerializeRoundtrip(f *testing.F) {
 		if numBlocks == 0 || numBlocks > 10000 {
 			numBlocks = 100
 		}
-		if k < 3 || k > 14 {
+		if k < minK || k > maxK {
 			k = 7
 		}
 

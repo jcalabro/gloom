@@ -7,42 +7,80 @@ const (
 	BlockBits = 512
 	// BlockWords is the number of uint64s per block.
 	BlockWords = BlockBits / 64 // 8
-	// ln2 is the natural logarithm of 2.
-	ln2 = 0.6931471805599453
 	// ln2Squared is ln(2)^2.
 	ln2Squared = 0.4804530139182014
 )
 
-// primePartitions contains pre-computed partition configurations for different
-// k values. Each configuration contains k strictly distinct values that sum to
-// exactly 512 bits (the block size).
+// minK and maxK bound the supported number of partitions (hash functions). The upper
+// bound is the largest k for which a partition of distinct, pairwise-coprime parts can
+// still sum to exactly 512: the 18 smallest distinct primes already sum to 501, leaving
+// too little room for an 18th distinct coprime part, so k=17 is the practical ceiling.
+const (
+	minK = 3
+	maxK = 17
+)
+
+// primePartitions contains pre-computed partition configurations for different k values.
+// Each configuration contains k values that are pairwise coprime and sum to exactly 512
+// bits (the block size).
 //
-// For even k values, all values are distinct primes.
-// For odd k values, one value must be even (and thus non-prime, since 2 is too
-// small for good modulo distribution) because the sum of an odd count of odd
-// numbers is always odd, but the target sum (512) is even.
+// The one-hashing technique requires the partition sizes to be PAIRWISE COPRIME (not
+// merely distinct): only then does a single hash value, reduced modulo each size, yield
+// independent positions (a Chinese Remainder Theorem argument). Most parts are primes,
+// which are automatically pairwise coprime; where an even "filler" is needed to make an
+// odd count of odd numbers sum to the even target 512, it is chosen coprime to the rest
+// (2 itself is avoided as too small for good modulo distribution).
 //
 // The values are chosen to be:
-// 1. Strictly distinct (required for one-hashing independence)
-// 2. Sum to exactly 512 to maximize block utilization
-// 3. As large as possible for good modulo distribution
+//  1. Pairwise coprime (required for one-hashing independence)
+//  2. Summing to exactly 512 to maximize block utilization
+//  3. As large and near-equal as possible for good modulo distribution
+//
+// All entries are verified by tests to be pairwise coprime and to sum to 512.
 var primePartitions = map[uint32][]uint32{
-	3:  {167, 173, 172},                                          // sum = 512 (172 is even filler)
-	4:  {109, 127, 137, 139},                                     // sum = 512, all prime
-	5:  {97, 101, 103, 109, 102},                                 // sum = 512 (102 is even filler)
-	6:  {61, 79, 83, 89, 97, 103},                                // sum = 512, all prime
-	7:  {61, 67, 71, 79, 83, 89, 62},                             // sum = 512 (62 is even filler)
-	8:  {37, 47, 53, 61, 67, 71, 79, 97},                         // sum = 512, all prime
-	9:  {41, 43, 47, 53, 59, 67, 71, 73, 58},                     // sum = 512 (58 is even filler)
-	10: {31, 37, 41, 43, 47, 53, 59, 61, 67, 73},                 // sum = 512, all prime
-	11: {29, 31, 37, 41, 43, 44, 47, 53, 59, 61, 67},             // sum = 512 (44 is even filler)
-	12: {17, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 71},         // sum = 512, all prime
-	13: {17, 19, 23, 29, 31, 37, 41, 43, 47, 52, 53, 59, 61},     // sum = 512 (52 is even filler)
-	14: {11, 13, 17, 19, 23, 29, 31, 37, 41, 47, 53, 59, 61, 71}, // sum = 512, all prime
+	3:  {167, 173, 172},                                                    // 172 is even filler
+	4:  {109, 127, 137, 139},                                               // all prime
+	5:  {97, 101, 103, 109, 102},                                           // 102 is even filler
+	6:  {61, 79, 83, 89, 97, 103},                                          // all prime
+	7:  {61, 67, 71, 79, 83, 89, 62},                                       // 62 is even filler
+	8:  {37, 47, 53, 61, 67, 71, 79, 97},                                   // all prime
+	9:  {41, 43, 47, 53, 59, 67, 71, 73, 58},                               // 58 is even filler
+	10: {31, 37, 41, 43, 47, 53, 59, 61, 67, 73},                           // all prime
+	11: {29, 31, 37, 41, 43, 44, 47, 53, 59, 61, 67},                       // 44 is even filler
+	12: {17, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 71},                   // all prime
+	13: {17, 19, 23, 29, 31, 37, 41, 43, 47, 52, 53, 59, 61},               // 52 is even filler
+	14: {11, 13, 17, 19, 23, 29, 31, 37, 41, 47, 53, 59, 61, 71},           // all prime
+	15: {11, 13, 17, 19, 23, 28, 29, 31, 37, 41, 43, 47, 53, 59, 61},       // 28 is even filler
+	16: {5, 7, 11, 13, 17, 19, 23, 27, 29, 31, 37, 41, 43, 47, 53, 109},    // 27 = 3^3, coprime to rest
+	17: {3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 32, 37, 41, 43, 47, 53, 101}, // 32 = 2^5, coprime to rest
 }
 
+// blockingGrowthCap bounds how far OptimalParams will grow the block count beyond the
+// classic estimate while compensating for the cache-line blocking penalty. The penalty is
+// modest in the practical range (well under 2x extra bits up to very low FP targets), so a
+// 4x cap is never reached by attainable targets; it only bounds work for targets that the
+// 512-bit block structure cannot meet at any size.
+const blockingGrowthCap = 4.0
+
 // OptimalParams calculates the optimal bloom filter parameters.
-// Returns the number of blocks, number of hash functions (k), and bits per item.
+// Returns the number of blocks, number of hash functions (k), and the classic
+// (non-blocked) bits per item used as the starting estimate.
+//
+// The sizing accounts for two effects that the textbook formulas ignore and that would
+// otherwise leave the realized rate worse than requested:
+//
+//   - Cache-line blocking penalty: items land in 512-bit blocks following a Poisson
+//     distribution, and because per-block FP is convex in load, the average realized FP
+//     exceeds the value the global-filter formula predicts. OptimalParams grows the block
+//     count until the estimated rate actually meets the target (bounded by
+//     blockingGrowthCap).
+//   - k selection: a large k splits each block into tiny prime partitions whose modulo
+//     collisions inflate FP, so the FP-minimizing k is chosen by [bestK] rather than the
+//     classic (m/n)*ln(2) value.
+//
+// For target rates too low to achieve with a 512-bit block at any size, the block count is
+// capped and the realized rate will exceed the target; callers needing a guarantee should
+// consult [AchievableFalsePositiveRate].
 func OptimalParams(expectedItems uint64, fpRate float64) (numBlocks uint64, k uint32, bitsPerItem float64) {
 	if expectedItems == 0 {
 		expectedItems = 1
@@ -54,27 +92,66 @@ func OptimalParams(expectedItems uint64, fpRate float64) (numBlocks uint64, k ui
 		fpRate = 0.99
 	}
 
-	// Optimal bits per item: -ln(fpRate) / ln(2)^2
+	// Classic (non-blocked) bits per item: -ln(fpRate) / ln(2)^2. This is the lower bound;
+	// the blocking penalty means we usually need somewhat more.
 	bitsPerItem = -math.Log(fpRate) / ln2Squared
 
-	// Total bits needed
+	// Starting block count from the classic estimate, rounded up to a whole block.
 	totalBits := float64(expectedItems) * bitsPerItem
+	baseBlocks := uint64(math.Ceil(totalBits / BlockBits))
+	if baseBlocks == 0 {
+		baseBlocks = 1
+	}
+	maxBlocks := uint64(math.Ceil(float64(baseBlocks) * blockingGrowthCap))
 
-	// Round up to nearest block (always >= 1 since totalBits > 0)
-	numBlocks = uint64(math.Ceil(totalBits / BlockBits))
-
-	// Actual bits per item given block rounding
-	actualBitsPerItem := float64(numBlocks*BlockBits) / float64(expectedItems)
-
-	// Optimal k: (m/n) * ln(2) = bitsPerItem * ln(2)
-	kFloat := actualBitsPerItem * ln2
-	k = uint32(math.Round(kFloat))
-
-	// Clamp k to supported range
-	k = max(k, 3)
-	k = min(k, 14)
+	// Grow the block count until the FP-minimizing k actually meets the target, or the cap
+	// is reached. Growth is geometric for speed, then we keep the smallest block count that
+	// satisfies the target.
+	numBlocks = baseBlocks
+	k = bestK(numBlocks, expectedItems)
+	for EstimateFalsePositiveRate(numBlocks, k, expectedItems) > fpRate && numBlocks < maxBlocks {
+		next := min(numBlocks+numBlocks/8+1, maxBlocks) // ~12.5% growth per step
+		numBlocks = next
+		k = bestK(numBlocks, expectedItems)
+	}
 
 	return numBlocks, k, bitsPerItem
+}
+
+// bestK returns the supported k in [minK, maxK] that minimizes the estimated
+// false-positive rate for the given block count and item count.
+func bestK(numBlocks, expectedItems uint64) uint32 {
+	best := uint32(minK)
+	bestFP := math.Inf(1)
+	for k := uint32(minK); k <= maxK; k++ {
+		fp := EstimateFalsePositiveRate(numBlocks, k, expectedItems)
+		if fp < bestFP {
+			bestFP = fp
+			best = k
+		}
+	}
+	return best
+}
+
+// AchievableFalsePositiveRate returns the lowest false-positive rate the filter can
+// actually deliver for expectedItems, and whether that meets the requested fpRate.
+//
+// The number of hash functions k is capped at maxK because a 512-bit block cannot be
+// partitioned into more than maxK distinct, pairwise-coprime parts. For very low target
+// rates the optimal k exceeds this cap, so the realized rate is worse than requested no
+// matter how much memory is allocated. This function makes that shortfall observable:
+// callers that require a hard guarantee can check met and react (allocate differently,
+// shard, or accept the achievable rate) rather than silently shipping a worse rate.
+//
+// achievable is computed with the same blocked, partitioned model used by
+// [EstimateFalsePositiveRate], so it reflects the rate the filter will actually exhibit
+// at the given load, including the cache-line blocking penalty.
+func AchievableFalsePositiveRate(expectedItems uint64, fpRate float64) (achievable float64, met bool) {
+	numBlocks, k, _ := OptimalParams(expectedItems, fpRate)
+	achievable = EstimateFalsePositiveRate(numBlocks, k, expectedItems)
+	// Treat tiny floating-point overshoot as met; the requested rate is the contract.
+	met = achievable <= fpRate*(1+1e-9)
+	return achievable, met
 }
 
 // GetPrimePartition returns the prime partition for the given k value.
