@@ -18,7 +18,7 @@ A high-performance bloom filter library for Go, implementing cache-line blocked 
   - `ShardedAtomicFilter` - Thread-safe with sharding, best for the highest write concurrency
 - Scales to billions of items: block and shard selection use the full hash width (no capacity cliff), and `OptimalParams` compensates for the cache-line blocking penalty so the realized false-positive rate meets the target
 - Zero allocations: Hot paths (Add/Test) allocate no memory
-- 100% test coverage: Comprehensive test suite
+- Comprehensive test suite
 
 ## Usage
 
