@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"math/bits"
 	"runtime"
 	"sync/atomic"
@@ -12,6 +13,12 @@ import (
 
 // cacheLineSize is the size of a CPU cache line in bytes.
 const cacheLineSize = 64
+
+// maxNumBlocks bounds the number of 512-bit blocks a filter may have. It keeps
+// numBlocks*BlockWords*8 well clear of uint64 overflow and of the platform int range used
+// for slice lengths, while permitting filters far larger than any practical deployment
+// (1<<50 blocks is ~64 petabytes). Enforced by both the constructors and UnmarshalBinary.
+const maxNumBlocks = uint64(1) << 50
 
 // Filter is a non-thread-safe bloom filter using cache-line blocked
 // one-hashing for optimal performance.
@@ -39,10 +46,12 @@ func New(expectedItems uint64, fpRate float64) *Filter {
 
 // NewWithParams creates a new bloom filter with explicit parameters.
 // numBlocks is the number of 512-bit blocks, k is the number of hash functions.
+//
+// numBlocks must not exceed maxNumBlocks; a larger value would overflow the internal
+// size computation and is treated as a programming error (panic) rather than silently
+// allocating a wrong-sized buffer.
 func NewWithParams(numBlocks uint64, k uint32) *Filter {
-	if numBlocks == 0 {
-		numBlocks = 1
-	}
+	numBlocks = validateNumBlocks(numBlocks)
 
 	primes := GetPrimePartition(k)
 	if primes == nil {
@@ -61,6 +70,21 @@ func NewWithParams(numBlocks uint64, k uint32) *Filter {
 		primes:    primes,
 		offsets:   ComputeOffsets(primes),
 	}
+}
+
+// validateNumBlocks normalizes numBlocks for the constructors: zero becomes one (a valid
+// minimal filter), and a value above maxNumBlocks panics because numBlocks*BlockWords would
+// overflow and produce a dangerously undersized allocation. Deserialization paths return an
+// error instead of panicking; constructors take caller-supplied parameters, so an
+// out-of-range value here is a programming error.
+func validateNumBlocks(numBlocks uint64) uint64 {
+	if numBlocks == 0 {
+		return 1
+	}
+	if numBlocks > maxNumBlocks {
+		panic(fmt.Sprintf("gloom: numBlocks %d exceeds maximum %d", numBlocks, maxNumBlocks))
+	}
+	return numBlocks
 }
 
 // makeAlignedUint64Slice allocates a cache-line aligned slice of uint64.
@@ -174,7 +198,15 @@ const (
 	// headerSize is the size of the serialization header in bytes.
 	// Version (1) + K (4) + NumBlocks (8) + Count (8) = 21 bytes
 	headerSize = 21
+
+	// checksumSize is the size of the trailing CRC-32C checksum in bytes.
+	checksumSize = 4
 )
+
+// crc32cTable is the Castagnoli CRC-32 table (hardware-accelerated on amd64/arm64). CRC-32C
+// detects the bit-flip and truncation corruption that would otherwise turn a persisted
+// filter into one with silent false negatives.
+var crc32cTable = crc32.MakeTable(crc32.Castagnoli)
 
 var (
 	// ErrInvalidData is returned when the serialized data is invalid or corrupted.
@@ -185,6 +217,11 @@ var (
 
 	// ErrInvalidK is returned when k value in serialized data is not supported.
 	ErrInvalidK = errors.New("gloom: invalid k value in serialized data")
+
+	// ErrChecksumMismatch is returned when the serialized data fails its CRC-32C check,
+	// indicating corruption. Loading a corrupted filter is refused rather than risking
+	// silent false negatives.
+	ErrChecksumMismatch = errors.New("gloom: checksum mismatch (data corrupted)")
 )
 
 // MarshalBinary serializes the bloom filter to a byte slice.
@@ -194,12 +231,15 @@ var (
 //   - NumBlocks (8 bytes): number of 512-bit blocks (little-endian uint64)
 //   - Count (8 bytes): number of items added (little-endian uint64)
 //   - Blocks (numBlocks * 64 bytes): the bit array data (little-endian uint64s)
+//   - Checksum (4 bytes): CRC-32C over all preceding bytes (little-endian uint32)
 //
-// The primes and offsets are not serialized as they can be derived from k.
+// The primes and offsets are not serialized as they can be derived from k. The trailing
+// checksum lets UnmarshalBinary detect corruption rather than silently loading a filter
+// that would return false negatives.
 func (f *Filter) MarshalBinary() ([]byte, error) {
-	// Calculate total size: header + block data
+	// Calculate total size: header + block data + checksum
 	dataSize := f.numBlocks * BlockWords * 8
-	totalSize := headerSize + dataSize
+	totalSize := headerSize + dataSize + checksumSize
 
 	buf := make([]byte, totalSize)
 
@@ -216,14 +256,18 @@ func (f *Filter) MarshalBinary() ([]byte, error) {
 		offset += 8
 	}
 
+	// Append CRC-32C over everything written so far.
+	crc := crc32.Checksum(buf[:offset], crc32cTable)
+	binary.LittleEndian.PutUint32(buf[offset:offset+checksumSize], crc)
+
 	return buf, nil
 }
 
 // UnmarshalBinary deserializes a bloom filter from a byte slice.
 // Returns an error if the data is invalid or corrupted.
 func UnmarshalBinary(data []byte) (*Filter, error) {
-	if len(data) < headerSize {
-		return nil, fmt.Errorf("%w: data too short (got %d bytes, need at least %d)", ErrInvalidData, len(data), headerSize)
+	if len(data) < headerSize+checksumSize {
+		return nil, fmt.Errorf("%w: data too short (got %d bytes, need at least %d)", ErrInvalidData, len(data), headerSize+checksumSize)
 	}
 
 	// Read and validate version
@@ -243,11 +287,8 @@ func UnmarshalBinary(data []byte) (*Filter, error) {
 		return nil, fmt.Errorf("%w: k=%d is not supported (valid range: %d-%d)", ErrInvalidK, k, minK, maxK)
 	}
 
-	// Validate numBlocks to prevent overflow in subsequent calculations.
-	// Max safe value ensures numBlocks * BlockWords * 8 won't overflow uint64
-	// and that we can safely convert to int for slice allocation.
-	// We also require at least 1 block for a valid filter.
-	const maxNumBlocks = uint64(1) << 50 // ~1 petabyte of data, more than enough
+	// Validate numBlocks to prevent overflow in subsequent calculations and reject a
+	// length field that could not have been produced by MarshalBinary.
 	if numBlocks == 0 {
 		return nil, fmt.Errorf("%w: numBlocks cannot be zero", ErrInvalidData)
 	}
@@ -255,11 +296,23 @@ func UnmarshalBinary(data []byte) (*Filter, error) {
 		return nil, fmt.Errorf("%w: numBlocks too large (%d)", ErrInvalidData, numBlocks)
 	}
 
-	// Validate data length (safe from overflow now that numBlocks is bounded)
+	// Validate total length (safe from overflow now that numBlocks is bounded). A short or
+	// long buffer, including a legacy checksum-less blob, fails here rather than being
+	// partially read.
 	expectedDataLen := numBlocks * BlockWords * 8
-	expectedTotalLen := headerSize + expectedDataLen
+	expectedTotalLen := headerSize + expectedDataLen + checksumSize
 	if uint64(len(data)) != expectedTotalLen {
 		return nil, fmt.Errorf("%w: data length mismatch (got %d bytes, expected %d)", ErrInvalidData, len(data), expectedTotalLen)
+	}
+
+	// Verify the CRC-32C trailer before trusting any block data. A mismatch means the bytes
+	// were corrupted in storage or transit; loading them could introduce false negatives, so
+	// we refuse rather than proceed.
+	payloadLen := len(data) - checksumSize
+	want := binary.LittleEndian.Uint32(data[payloadLen:])
+	got := crc32.Checksum(data[:payloadLen], crc32cTable)
+	if got != want {
+		return nil, fmt.Errorf("%w: computed %#08x, stored %#08x", ErrChecksumMismatch, got, want)
 	}
 
 	// Allocate aligned memory for blocks
@@ -304,10 +357,10 @@ func NewAtomic(expectedItems uint64, fpRate float64) *AtomicFilter {
 }
 
 // NewAtomicWithParams creates a new thread-safe bloom filter with explicit parameters.
+//
+// As with [NewWithParams], numBlocks must not exceed maxNumBlocks (panics otherwise).
 func NewAtomicWithParams(numBlocks uint64, k uint32) *AtomicFilter {
-	if numBlocks == 0 {
-		numBlocks = 1
-	}
+	numBlocks = validateNumBlocks(numBlocks)
 
 	primes := GetPrimePartition(k)
 	if primes == nil {

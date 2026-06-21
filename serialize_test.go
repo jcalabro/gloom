@@ -2,7 +2,10 @@ package gloom
 
 import (
 	"bytes"
+	"encoding/binary"
+	"errors"
 	"fmt"
+	"hash/crc32"
 	"testing"
 )
 
@@ -473,8 +476,8 @@ func TestSerializeDataFormat(t *testing.T) {
 		t.Errorf("count mismatch: got %d, want 1", count)
 	}
 
-	// Verify total length
-	expectedLen := headerSize + 2*BlockWords*8 // 2 blocks * 8 words * 8 bytes
+	// Verify total length (header + 2 blocks * 8 words * 8 bytes + CRC trailer)
+	expectedLen := headerSize + 2*BlockWords*8 + checksumSize
 	if len(data) != expectedLen {
 		t.Errorf("data length mismatch: got %d, want %d", len(data), expectedLen)
 	}
@@ -594,8 +597,8 @@ func TestSerializeMinimalFilter(t *testing.T) {
 		t.Fatalf("MarshalBinary failed: %v", err)
 	}
 
-	// Expected size: header (21) + 1 block * 8 words * 8 bytes = 21 + 64 = 85 bytes
-	expectedSize := headerSize + 1*BlockWords*8
+	// Expected size: header (21) + 1 block * 8 words * 8 bytes + CRC (4) = 89 bytes
+	expectedSize := headerSize + 1*BlockWords*8 + checksumSize
 	if len(data) != expectedSize {
 		t.Errorf("unexpected data size: got %d, want %d", len(data), expectedSize)
 	}
@@ -727,4 +730,125 @@ func FuzzUnmarshalBinaryInvalid(f *testing.F) {
 		// Should not panic, may return error
 		_, _ = UnmarshalBinary(data)
 	})
+}
+
+// fixChecksum recomputes and rewrites the trailing CRC-32C so that a deliberately mutated
+// payload still passes the integrity check. This lets tests exercise field-validation paths
+// (bad k, etc.) rather than tripping the checksum first.
+func fixChecksum(data []byte) {
+	payloadLen := len(data) - checksumSize
+	crc := crc32.Checksum(data[:payloadLen], crc32cTable)
+	binary.LittleEndian.PutUint32(data[payloadLen:], crc)
+}
+
+// TestSerializeChecksumDetectsCorruption verifies that flipping any single byte of the
+// payload is detected as a checksum mismatch rather than silently loading a filter that
+// could exhibit false negatives. This is the core data-integrity guarantee.
+func TestSerializeChecksumDetectsCorruption(t *testing.T) {
+	original := New(10000, 0.01)
+	for i := range 2000 {
+		original.AddString(fmt.Sprintf("item-%d", i))
+	}
+	data, err := original.MarshalBinary()
+	if err != nil {
+		t.Fatalf("MarshalBinary failed: %v", err)
+	}
+
+	// Flip one bit in each of a sample of positions spanning header, blocks, and checksum.
+	positions := []int{0, 1, 5, 13, headerSize, headerSize + 1, len(data) / 2, len(data) - checksumSize, len(data) - 1}
+	for _, pos := range positions {
+		corrupt := make([]byte, len(data))
+		copy(corrupt, data)
+		corrupt[pos] ^= 0x01 // flip the low bit
+
+		// A flip in the version or k header bytes may legitimately trip those validators
+		// first; everywhere else (and often there too) it must be caught as corruption.
+		_, err := UnmarshalBinary(corrupt)
+		if err == nil {
+			t.Errorf("corruption at byte %d not detected", pos)
+		}
+		// A flip in a block byte (clearly past the header, before the checksum) must be a
+		// checksum mismatch specifically, since no other validator inspects block contents.
+		if pos >= headerSize && pos < len(data)-checksumSize {
+			if !errors.Is(err, ErrChecksumMismatch) {
+				t.Errorf("block-byte corruption at %d gave %v, want ErrChecksumMismatch", pos, err)
+			}
+		}
+	}
+}
+
+// TestSerializeChecksumValidRoundtrip confirms an untouched payload verifies cleanly.
+func TestSerializeChecksumValidRoundtrip(t *testing.T) {
+	f := New(1000, 0.01)
+	for i := range 500 {
+		f.AddString(fmt.Sprintf("k-%d", i))
+	}
+	data, err := f.MarshalBinary()
+	if err != nil {
+		t.Fatalf("MarshalBinary failed: %v", err)
+	}
+	if _, err := UnmarshalBinary(data); err != nil {
+		t.Errorf("valid data rejected: %v", err)
+	}
+}
+
+// TestSerializeInvalidKWithValidChecksum verifies the k-range validator fires for an
+// out-of-range k even when the checksum is correct (i.e. the field is genuinely validated,
+// not merely shielded by the CRC).
+func TestSerializeInvalidKWithValidChecksum(t *testing.T) {
+	f := NewWithParams(100, 7)
+	data, err := f.MarshalBinary()
+	if err != nil {
+		t.Fatalf("MarshalBinary failed: %v", err)
+	}
+
+	for _, badK := range []uint32{0, 1, 2, maxK + 1, 100} {
+		corrupt := make([]byte, len(data))
+		copy(corrupt, data)
+		binary.LittleEndian.PutUint32(corrupt[1:5], badK)
+		fixChecksum(corrupt) // make the checksum valid so only the k check can reject
+
+		_, err := UnmarshalBinary(corrupt)
+		if !errors.Is(err, ErrInvalidK) {
+			t.Errorf("k=%d: got %v, want ErrInvalidK", badK, err)
+		}
+	}
+}
+
+// TestSerializeLegacyNoChecksumRejected verifies that a buffer the exact size of the old
+// (pre-checksum) format is rejected rather than misread. Since version stays 1, the length
+// check is what guards against silently loading legacy data.
+func TestSerializeLegacyNoChecksumRejected(t *testing.T) {
+	f := NewWithParams(2, 7)
+	data, err := f.MarshalBinary()
+	if err != nil {
+		t.Fatalf("MarshalBinary failed: %v", err)
+	}
+	// Strip the checksum trailer to mimic a legacy blob.
+	legacy := data[:len(data)-checksumSize]
+	if _, err := UnmarshalBinary(legacy); !errors.Is(err, ErrInvalidData) {
+		t.Errorf("legacy checksum-less data: got %v, want ErrInvalidData", err)
+	}
+}
+
+// TestNewWithParamsRejectsHugeNumBlocks verifies the constructors panic on a numBlocks that
+// would overflow the internal size computation, rather than silently allocating a tiny
+// buffer and writing out of bounds.
+func TestNewWithParamsRejectsHugeNumBlocks(t *testing.T) {
+	for _, ctor := range []struct {
+		name string
+		fn   func(uint64)
+	}{
+		{"NewWithParams", func(n uint64) { NewWithParams(n, 7) }},
+		{"NewAtomicWithParams", func(n uint64) { NewAtomicWithParams(n, 7) }},
+	} {
+		t.Run(ctor.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s did not panic on numBlocks > maxNumBlocks", ctor.name)
+				}
+			}()
+			ctor.fn(maxNumBlocks + 1)
+		})
+	}
 }
