@@ -92,7 +92,7 @@ func (f *Filter) addWithHash(blockIdx uint64, intraHash uint32) {
 
 	// One-hashing: same hash value mod different primes gives independent positions
 	for i := uint32(0); i < f.k; i++ {
-		bitPos := f.offsets[i] + (intraHash % f.primes[i])
+		bitPos := f.offsets[i] + intraHash%f.primes[i]
 		wordIdx := bitPos / 64
 		bitIdx := bitPos % 64
 		f.blocks[blockBase+uint64(wordIdx)] |= (1 << bitIdx)
@@ -120,7 +120,7 @@ func (f *Filter) testWithHash(blockIdx uint64, intraHash uint32) bool {
 	blockBase := blockIdx * BlockWords
 
 	for i := uint32(0); i < f.k; i++ {
-		bitPos := f.offsets[i] + (intraHash % f.primes[i])
+		bitPos := f.offsets[i] + intraHash%f.primes[i]
 		wordIdx := bitPos / 64
 		bitIdx := bitPos % 64
 		if f.blocks[blockBase+uint64(wordIdx)]&(1<<bitIdx) == 0 {
@@ -357,7 +357,7 @@ func (f *AtomicFilter) addWithHash(blockIdx uint64, intraHash uint32) {
 	blockBase := blockIdx * BlockWords
 
 	for i := uint32(0); i < f.k; i++ {
-		bitPos := f.offsets[i] + (intraHash % f.primes[i])
+		bitPos := f.offsets[i] + intraHash%f.primes[i]
 		wordIdx := bitPos / 64
 		bitIdx := bitPos % 64
 		mask := uint64(1) << bitIdx
@@ -386,7 +386,7 @@ func (f *AtomicFilter) testWithHash(blockIdx uint64, intraHash uint32) bool {
 	blockBase := blockIdx * BlockWords
 
 	for i := uint32(0); i < f.k; i++ {
-		bitPos := f.offsets[i] + (intraHash % f.primes[i])
+		bitPos := f.offsets[i] + intraHash%f.primes[i]
 		wordIdx := bitPos / 64
 		bitIdx := bitPos % 64
 		if f.blocks[blockBase+uint64(wordIdx)].Load()&(1<<bitIdx) == 0 {
@@ -478,41 +478,34 @@ func NewShardedAtomicDefault(expectedItems uint64, fpRate float64) *ShardedAtomi
 
 // Add adds data to the bloom filter.
 func (f *ShardedAtomicFilter) Add(data []byte) {
-	h := hashRaw(data)
-	shard := f.shards[f.shardIndex(h)]
+	h := hashRaw128(data)
+	shard := f.shards[shardIndexFromHash(h, f.mask)]
 	blockIdx, intraHash := hashSplitSharded(h, shard.numBlocks)
 	shard.addWithHash(blockIdx, intraHash)
 }
 
 // AddString adds a string to the bloom filter without allocating.
 func (f *ShardedAtomicFilter) AddString(s string) {
-	h := hashRawString(s)
-	shard := f.shards[f.shardIndex(h)]
+	h := hashRawString128(s)
+	shard := f.shards[shardIndexFromHash(h, f.mask)]
 	blockIdx, intraHash := hashSplitSharded(h, shard.numBlocks)
 	shard.addWithHash(blockIdx, intraHash)
 }
 
 // Test checks if data might be in the bloom filter.
 func (f *ShardedAtomicFilter) Test(data []byte) bool {
-	h := hashRaw(data)
-	shard := f.shards[f.shardIndex(h)]
+	h := hashRaw128(data)
+	shard := f.shards[shardIndexFromHash(h, f.mask)]
 	blockIdx, intraHash := hashSplitSharded(h, shard.numBlocks)
 	return shard.testWithHash(blockIdx, intraHash)
 }
 
 // TestString checks if a string might be in the bloom filter.
 func (f *ShardedAtomicFilter) TestString(s string) bool {
-	h := hashRawString(s)
-	shard := f.shards[f.shardIndex(h)]
+	h := hashRawString128(s)
+	shard := f.shards[shardIndexFromHash(h, f.mask)]
 	blockIdx, intraHash := hashSplitSharded(h, shard.numBlocks)
 	return shard.testWithHash(blockIdx, intraHash)
-}
-
-// shardIndex extracts the shard index from a hash value.
-// Uses bits 32-47, which are non-overlapping with block selection (bits 48-63)
-// and intra-block hashing (bits 0-31).
-func (f *ShardedAtomicFilter) shardIndex(h uint64) uint64 {
-	return (h >> 32) & f.mask
 }
 
 // Cap returns the total capacity of all shards in bits.

@@ -126,7 +126,7 @@ func Example_statistics() {
 	// Capacity: 96256 bits
 	// Hash functions (k): 7
 	// Items added: 5000
-	// Fill ratio: 30.4%
+	// Fill ratio: 30.3%
 }
 
 // This example demonstrates creating a filter with explicit parameters.

@@ -1030,6 +1030,73 @@ func TestNoFalseNegativesUnderStress(t *testing.T) {
 	}
 }
 
+// TestShardedFalsePositiveRateAtScale guards against regression of the block-selection
+// cliff: the original sharded implementation selected blocks from only 16 bits of the
+// hash, capping each shard at 65536 reachable blocks. Past that, higher blocks were never
+// addressed and the realized false-positive rate exploded (measured 40x-90x target) while
+// EstimatedFalsePositiveRate still reported the target. This test fills shards well beyond
+// 65536 blocks each and asserts the realized FP stays within a tight multiple of target.
+//
+// With the multiply-shift block selection over a full 64-bit hash half, FP holds at roughly
+// the cache-line blocking penalty (~1.2x at 1%) regardless of scale.
+func TestShardedFalsePositiveRateAtScale(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping large-scale FP test in short mode")
+	}
+
+	// Each case provisions a single shard and loads it past the old 65536-block ceiling so
+	// the per-shard block count is firmly in the regime that used to break.
+	cases := []struct {
+		name     string
+		items    uint64
+		fpRate   float64
+		maxRatio float64 // realized FP must stay below fpRate*maxRatio
+	}{
+		{"5M items 1%", 5_000_000, 0.01, 2.0},
+		{"10M items 1%", 10_000_000, 0.01, 2.0},
+		{"20M items 1%", 20_000_000, 0.01, 2.0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := NewShardedAtomic(tc.items, tc.fpRate, 1)
+			blocksPerShard := f.NumBlocks() / f.NumShards()
+			if blocksPerShard <= 65536 {
+				t.Fatalf("test misconfigured: blocks/shard=%d does not exceed the old 65536 ceiling",
+					blocksPerShard)
+			}
+
+			for i := range tc.items {
+				f.AddString(fmt.Sprintf("member-%d", i))
+			}
+
+			// Verify no false negatives.
+			for i := range tc.items {
+				if !f.TestString(fmt.Sprintf("member-%d", i)) {
+					t.Fatalf("false negative at item %d", i)
+				}
+			}
+
+			// Measure realized FP against disjoint non-members.
+			const probes = 500_000
+			var fp uint64
+			for i := range uint64(probes) {
+				if f.TestString(fmt.Sprintf("nonmember-%d", i)) {
+					fp++
+				}
+			}
+			observed := float64(fp) / float64(probes)
+			limit := tc.fpRate * tc.maxRatio
+			t.Logf("blocks/shard=%d observed FP=%.5f target=%.5f limit=%.5f",
+				blocksPerShard, observed, tc.fpRate, limit)
+			if observed > limit {
+				t.Errorf("realized FP %.5f exceeds %.5f (target %.5f) at blocks/shard=%d: block-selection cliff regression",
+					observed, limit, tc.fpRate, blocksPerShard)
+			}
+		})
+	}
+}
+
 // TestConcurrentNoFalseNegatives verifies no false negatives under concurrent access
 func TestConcurrentNoFalseNegatives(t *testing.T) {
 	const (
