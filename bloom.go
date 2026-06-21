@@ -385,6 +385,14 @@ func UnmarshalBinary(data []byte) (*Filter, error) {
 // AtomicFilter is a thread-safe bloom filter using atomic operations.
 // It uses the same cache-line blocked one-hashing technique as Filter
 // but with atomic.Uint64 for concurrent access.
+//
+// AtomicFilter deliberately has no MarshalBinary/UnmarshalBinary (only [Filter] does). A
+// concurrent filter cannot be marshaled into a sound snapshot: an Add sets k bits across k
+// separate words non-atomically, so a marshal racing with writers can capture a torn state
+// (some of an item's bits but not others) and a count that disagrees with the bit array.
+// Persisting that would deserialize into a filter that returns false negatives. To persist,
+// stop all writers and serialize under your own synchronization, or build a [Filter] from
+// the same data.
 type AtomicFilter struct {
 	raw       []byte          // Raw allocation to keep aligned memory alive for GC
 	blocks    []atomic.Uint64 // 8 atomic uint64s per block = 512 bits (cache-line aligned)
@@ -564,6 +572,10 @@ func (f *AtomicFilter) EstimatedFalsePositiveRate() float64 {
 // across multiple shards to reduce contention under parallel workloads.
 // Each shard is an independent AtomicFilter, and keys are consistently
 // routed to shards based on their hash.
+//
+// Like [AtomicFilter], this is intentionally not serializable: a concurrent filter cannot
+// be marshaled into a sound snapshot (see the note on [AtomicFilter]). Only the
+// single-threaded [Filter] supports MarshalBinary/UnmarshalBinary.
 type ShardedAtomicFilter struct {
 	shards    []*AtomicFilter
 	numShards uint64
