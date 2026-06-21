@@ -288,37 +288,31 @@ func TestSerializeDataLengthMismatch(t *testing.T) {
 }
 
 func TestSerializeZeroNumBlocks(t *testing.T) {
-	// Manually craft data with numBlocks=0
-	data := make([]byte, headerSize)
+	// Manually craft data with numBlocks=0 and a valid checksum, so the numBlocks check
+	// (which runs before the checksum) is what rejects it.
+	data := make([]byte, headerSize+checksumSize)
 	data[0] = 1                                     // version
 	data[1], data[2], data[3], data[4] = 7, 0, 0, 0 // k=7
-	// bytes 5-12 are all 0 (numBlocks=0)
-	// bytes 13-20 are all 0 (count=0)
+	// bytes 5-12 are all 0 (numBlocks=0); bytes 13-20 are all 0 (count=0)
+	fixChecksum(data)
 
 	_, err := UnmarshalBinary(data)
-	if err == nil {
-		t.Error("expected error for numBlocks=0")
+	if !errors.Is(err, ErrInvalidData) {
+		t.Errorf("expected ErrInvalidData for numBlocks=0, got %v", err)
 	}
 }
 
 func TestSerializeNumBlocksTooLarge(t *testing.T) {
-	// Manually craft data with huge numBlocks that would cause overflow
-	data := make([]byte, headerSize)
+	// Manually craft data with a huge numBlocks (would overflow) and a valid checksum.
+	data := make([]byte, headerSize+checksumSize)
 	data[0] = 1                                     // version
 	data[1], data[2], data[3], data[4] = 7, 0, 0, 0 // k=7
-	// Set numBlocks to a huge value (0x3000000000000000)
-	data[5] = 0
-	data[6] = 0
-	data[7] = 0
-	data[8] = 0
-	data[9] = 0
-	data[10] = 0
-	data[11] = 0
-	data[12] = 0x30 // This makes numBlocks = 0x3000000000000000 in little-endian
+	data[12] = 0x30                                 // numBlocks = 0x3000000000000000 (little-endian)
+	fixChecksum(data)
 
 	_, err := UnmarshalBinary(data)
-	if err == nil {
-		t.Error("expected error for huge numBlocks")
+	if !errors.Is(err, ErrInvalidData) {
+		t.Errorf("expected ErrInvalidData for huge numBlocks, got %v", err)
 	}
 }
 

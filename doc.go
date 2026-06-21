@@ -57,10 +57,15 @@
 //   - Number of hash functions (k)
 //   - Number of items added
 //
-// When the filter is filled to its intended capacity, it will achieve
-// approximately the target false positive rate. Adding more items than
-// the capacity increases the false positive rate. Use [Filter.EstimatedFalsePositiveRate]
-// to monitor the current rate.
+// When the filter is filled to its intended capacity, it achieves approximately the
+// target false positive rate: [OptimalParams] sizes the filter to compensate for the
+// cache-line blocking penalty (the per-block Poisson load variance that would otherwise
+// push the realized rate above target). Adding more items than the capacity increases the
+// rate. Use [Filter.EstimatedFalsePositiveRate] to monitor the current rate.
+//
+// Very low target rates (below roughly 1e-11) cannot be achieved by a 512-bit block at any
+// size. Use [AchievableFalsePositiveRate] to check whether a target is attainable before
+// relying on it.
 //
 // # Memory Usage
 //
@@ -82,15 +87,25 @@
 // [AtomicFilter] and [ShardedAtomicFilter] are safe for concurrent Add and
 // Test operations.
 //
+// Only [Filter] is serializable. This is intentional: marshaling a filter that is being
+// mutated concurrently cannot produce a sound snapshot (an Add sets k bits across k words
+// non-atomically, so a concurrent marshal could capture a torn state and a count that
+// disagrees with the bit array, which would deserialize into a filter that returns false
+// negatives). To persist a concurrent filter, stop all writers first and serialize under
+// your own synchronization, or build a [Filter] from the same data.
+//
 // # Performance Tips
 //
 //   - Use [Filter] for single-threaded workloads (fastest)
-//   - Use [ShardedAtomicFilter] for write-heavy concurrent workloads
-//   - Use [AtomicFilter] for read-heavy concurrent workloads
+//   - Use [AtomicFilter] for concurrent workloads; its counter is striped, so writes
+//     scale across cores
+//   - Use [ShardedAtomicFilter] to extract the last bit of write throughput on
+//     many-core machines
 //   - Use string methods ([Filter.AddString], [Filter.TestString]) to avoid
 //     allocating when you have string keys
-//   - Build with GOAMD64=v2 or higher to enable hardware POPCNT for
-//     [Filter.EstimatedFillRatio]
+//   - Use [Filter.SampledFillRatio] instead of [Filter.EstimatedFillRatio] for frequent
+//     monitoring of large filters (the latter scans the whole bit array)
+//   - Build with GOAMD64=v2 or higher to enable hardware POPCNT for the fill-ratio methods
 //
 // # References
 //

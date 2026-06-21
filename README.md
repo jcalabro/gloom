@@ -11,11 +11,12 @@ A high-performance bloom filter library for Go, implementing cache-line blocked 
 ## Features
 
 - **Cache-line optimized**: All k bit probes for a key are aligned and fit within a single 64-byte cache line, minimizing memory access latency
-- **One-hashing technique**: Uses a single xxh3 call with prime modulo partitions instead of k independent hash functions
+- **One-hashing technique**: Uses a single xxh3 (128-bit) call with prime modulo partitions instead of k independent hash functions
 - **Three implementations**:
-  - `Filter` - Non-thread-safe, fastest for single-threaded workloads, allows for serialization/deserialization
-  - `AtomicFilter` - Thread-safe using `atomic.Uint64.Or()`, best for read-heavy concurrent workloads
-  - `ShardedAtomicFilter` - Thread-safe with sharding, best for write-heavy concurrent workloads
+  - `Filter` - Non-thread-safe, fastest for single-threaded workloads, supports serialization/deserialization (with a CRC integrity check)
+  - `AtomicFilter` - Thread-safe using `atomic.Uint64.Or()`, with a striped counter so concurrent writes scale across cores
+  - `ShardedAtomicFilter` - Thread-safe with sharding, best for the highest write concurrency
+- **Scales to billions of items**: block and shard selection use the full hash width (no capacity cliff), and `OptimalParams` compensates for the cache-line blocking penalty so the realized false-positive rate meets the target
 - **Zero allocations**: Hot paths (Add/Test) allocate no memory
 - **100% test coverage**: Comprehensive test suite
 - **Go 1.23+**: Uses modern atomic operations for best performance
@@ -78,7 +79,11 @@ func main() {
 
 ### High-Throughput Concurrent Writes
 
-For write-heavy concurrent workloads, use `ShardedAtomicFilter` which distributes writes across multiple independent shards to reduce contention:
+`AtomicFilter` now scales well under concurrent writes on its own (its item counter is striped
+across cache lines), so for most concurrent workloads it is the simplest choice.
+`ShardedAtomicFilter` squeezes out the last bit of write throughput on machines with very many
+cores by splitting the filter into independent shards; the capacity you pass is divided evenly
+across them:
 
 ```go
 package main
@@ -131,8 +136,8 @@ fmt.Printf("Est. FP rate: %.4f%%\n", f.EstimatedFalsePositiveRate()*100)
 Traditional bloom filters use k independent hash functions, each potentially accessing a different cache line. Gloom instead:
 
 1. **Blocks memory into 512-bit (64-byte) chunks** matching CPU cache line size
-2. **Uses one xxh3 call** per operation - upper 32 bits select the block, lower 32 bits are reused
-3. **Partitions each block by k primes** - the same hash value mod different primes gives k independent bit positions
+2. **Uses one xxh3 (128-bit) call** per operation — the high 64 bits select the block (via a multiply-shift range reduction, so there is no capacity cliff and no modulo bias at any block count), and the low 64 bits are folded into the intra-block hash
+3. **Partitions each block by k pairwise-coprime sizes** — the same hash value mod different sizes gives k independent bit positions (a Chinese Remainder Theorem argument; this is why the sizes must be coprime, not merely distinct)
 
 ```
 ┌───────────────────────────────────┐
@@ -141,8 +146,8 @@ Traditional bloom filters use k independent hash functions, each potentially acc
                   │
                   ▼
 ┌───────────────────────────────────┐
-│         xxh3.Hash(key)            │
-│    h = 0xA1B2C3D4_E5F67890        │
+│       xxh3.Hash128(key)           │
+│  hi = 0xA1B2C3D4...  lo = 0x...    │
 └─────────────────┬─────────────────┘
                   │
     ┌─────────────┴─────────────┐
@@ -150,8 +155,8 @@ Traditional bloom filters use k independent hash functions, each potentially acc
     ▼                           ▼
 ┌─────────────────┐   ┌─────────────────┐
 │  Block Index    │   │  Intra-Hash     │
-│  h >> 32        │   │  uint32(h)      │
-│  % numBlocks    │   │  = 0xE5F67890   │
+│  reduceRange(   │   │  fold(lo) ->    │
+│   hi,numBlocks) │   │  uint32         │
 │  = Block 2      │   │                 │
 └────────┬────────┘   └────────┬────────┘
          │                     │
@@ -197,36 +202,40 @@ Traditional bloom filters use k independent hash functions, each potentially acc
 
 The times shown below are the mean time per operation as reported by Go's `testing.B` framework. For latency percentiles, see the [Histogram Benchmarks](#histogram-benchmarks) section.
 
-Benchmarks run on AMD Ryzen 9 9950X (32 threads), Go 1.23+, comparing against:
+Benchmarks run on AMD Ryzen 9 9950X (32 threads), built with `GOAMD64=v2`
+(see [Tips](#tips)), comparing against:
 - [bits-and-blooms/bloom](https://github.com/bits-and-blooms/bloom) - Popular non-thread-safe implementation
-- [jazware/atomic-bloom](https://github.com/jazware/atomic-bloom) - Thread-safe fork of bits-and-blooms using atomics
+- [ericvolp12/atomic-bloom](https://github.com/ericvolp12/atomic-bloom) - Thread-safe fork of bits-and-blooms using atomics
 - [greatroar/blobloom](https://github.com/greatroar/blobloom) - Cache-blocked filter (requires pre-hashing)
 
 ### Sequential Performance (single-threaded)
 
 | Operation | Gloom | Gloom Atomic | BitsAndBlooms | AtomicBloom | Blobloom* |
 |-----------|-------|--------------|---------------|-------------|-----------|
-| **Add** | 19.9 ns | 35.7 ns | 44.4 ns | 57.5 ns | 16.9 ns |
-| **Test** | 16.3 ns | 17.4 ns | 40.7 ns | 41.4 ns | 5.5 ns |
+| **Add** | 16.1 ns | 31.5 ns | 40.7 ns | 65.5 ns | 12.2 ns |
+| **Test** | 14.1 ns | 14.5 ns | 38.0 ns | 38.3 ns | 5.5 ns |
 
 *Blobloom requires pre-hashing input, so times exclude hash computation.
 
 ### Parallel Performance (GOMAXPROCS=32)
 
+The atomic counter is striped, so `AtomicFilter` writes now scale across cores and outperform
+the comparison atomic filter on every parallel workload, approaching the sharded filter.
+
 | Operation | Gloom Atomic | Gloom Sharded | AtomicBloom |
 |-----------|--------------|---------------|-------------|
-| **Parallel Add** | 51.3 ns | **11.2 ns** | 19.2 ns |
-| **Parallel Test** | **0.96 ns** | 1.00 ns | 1.94 ns |
-| **Mixed R/W** | 30.9 ns | **7.1 ns** | 19.6 ns |
-| **High Contention** | 64.6 ns | **17.2 ns** | 43.1 ns |
+| **Parallel Add** | 7.65 ns | **7.35 ns** | 19.1 ns |
+| **Parallel Test** | **0.88 ns** | 0.94 ns | 1.91 ns |
+| **Mixed R/W** | 4.74 ns | **4.49 ns** | 12.2 ns |
+| **High Contention** | 10.4 ns | **10.2 ns** | 29.6 ns |
 
 ### Throughput
 
 | Implementation | Items/sec (8 goroutines) |
 |----------------|--------------------------|
-| Gloom (non-atomic) | 38.3M items/sec |
-| Gloom Atomic | 19.4M items/sec |
-| **Gloom Sharded** | **78.6M items/sec** |
+| Gloom (non-atomic) | 36.5M items/sec |
+| Gloom Atomic | 122M items/sec |
+| **Gloom Sharded** | **129M items/sec** |
 
 ### Histogram Benchmarks
 
@@ -234,12 +243,12 @@ Sample output (Add operations on the same hardware as above):
 
 | Library | Mean | p50 | p99 | p9999 |
 |---------|------|-----|-----|-------|
-| Gloom | 57 ns | 30 ns | 60 ns | 401 ns |
-| GloomAtomic | 76 ns | 50 ns | 100 ns | 501 ns |
-| GloomSharded | 75 ns | 50 ns | 91 ns | 471 ns |
-| BitsAndBlooms | 103 ns | 80 ns | 170 ns | 682 ns |
-| AtomicBloom | 95 ns | 70 ns | 120 ns | 571 ns |
-| Blobloom* | 52 ns | 30 ns | 60 ns | 380 ns |
+| Gloom | 49 ns | 30 ns | 51 ns | 471 ns |
+| GloomAtomic | 67 ns | 50 ns | 61 ns | 410 ns |
+| GloomSharded | 72 ns | 60 ns | 140 ns | 470 ns |
+| BitsAndBlooms | 93 ns | 80 ns | 281 ns | 2404 ns |
+| AtomicBloom | 95 ns | 80 ns | 661 ns | 2485 ns |
+| Blobloom* | 45 ns | 30 ns | 90 ns | 300 ns |
 
 ### Running Tests and Benchmarks
 
@@ -257,7 +266,32 @@ just bench-long
 
 ### Tips
 
-For maximum performance on modern x86-64 CPUs, ensure you're building with [GOAMD64=v2](https://go.dev/wiki/MinimumRequirements#microarchitecture-support) or above. This enables hardware POPCNT instructions (used for fill ratio estimation) without runtime CPU detection overhead. Ensure your CPU supports `popcnt` first.
+For maximum performance on modern x86-64 CPUs, build with [GOAMD64=v2](https://go.dev/wiki/MinimumRequirements#microarchitecture-support) or above. This enables hardware POPCNT (used by `EstimatedFillRatio`/`SampledFillRatio`) without runtime CPU detection overhead. Ensure your CPU supports `popcnt` first. The benchmark numbers above were collected at `v2`; the default `v1` build is slightly slower on the fill-ratio paths.
+
+## Scaling to Billions of Items
+
+Gloom is designed for very large filters. A few things to know at scale:
+
+- **No capacity cliff.** Block and shard selection use the full 64-bit hash, so there is no
+  practical ceiling on blocks per filter or per shard. Filters sized for billions of items work
+  the same as small ones.
+- **Realized false-positive rate meets target.** `OptimalParams` accounts for the cache-line
+  blocking penalty, so a filter sized for `n` items at rate `p` actually delivers about `p` at
+  capacity (earlier blocked filters silently ran 1.2–2x over). Use
+  `EstimatedFalsePositiveRate` to monitor the live rate as the filter fills.
+- **Check very low targets are attainable.** A 512-bit block cannot reach arbitrarily low rates
+  (below ~1e-11) at any size. Call `AchievableFalsePositiveRate(expectedItems, fpRate)`; if it
+  returns `met == false`, pick a higher rate or split the data set.
+- **Bloom filters do not grow.** Size for your maximum expected item count up front; adding far
+  beyond capacity raises the false-positive rate (it never produces false negatives). To "resize",
+  build a new, larger filter and re-add.
+- **Memory:** `num_blocks * 64` bytes, roughly `-n * ln(p) / (ln 2)^2 / 8` bytes plus the blocking
+  margin. ~1.2 MB per million items at 1%.
+- **Monitoring:** prefer `SampledFillRatio` over `EstimatedFillRatio` in metrics loops — the latter
+  scans the whole array (tens of ms for a multi-GB filter).
+- **Huge pages / TLB:** a multi-GB filter touches one random block (one cache line) per operation,
+  so TLB pressure dominates. Backing the allocation with huge pages (e.g. `madvise(MADV_HUGEPAGE)`
+  / transparent huge pages) measurably reduces tail latency at this scale.
 
 ## License
 

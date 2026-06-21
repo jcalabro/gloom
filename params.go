@@ -96,12 +96,10 @@ func OptimalParams(expectedItems uint64, fpRate float64) (numBlocks uint64, k ui
 	// the blocking penalty means we usually need somewhat more.
 	bitsPerItem = -math.Log(fpRate) / ln2Squared
 
-	// Starting block count from the classic estimate, rounded up to a whole block.
+	// Starting block count from the classic estimate, rounded up to a whole block. With
+	// expectedItems >= 1 and fpRate < 1, bitsPerItem > 0, so this is always >= 1.
 	totalBits := float64(expectedItems) * bitsPerItem
 	baseBlocks := uint64(math.Ceil(totalBits / BlockBits))
-	if baseBlocks == 0 {
-		baseBlocks = 1
-	}
 	maxBlocks := uint64(math.Ceil(float64(baseBlocks) * blockingGrowthCap))
 
 	// Grow the block count until the FP-minimizing k actually meets the target, or the cap
