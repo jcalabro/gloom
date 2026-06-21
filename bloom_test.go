@@ -89,6 +89,74 @@ func TestFilterEstimatedFillRatio(t *testing.T) {
 	t.Logf("Fill ratio after 500 items: %.4f", ratio)
 }
 
+func TestSampledFillRatio(t *testing.T) {
+	// A large filter so there are many blocks to sample from.
+	const items = 2_000_000
+	f := New(items, 0.01)
+	for i := range items {
+		f.AddString(fmt.Sprintf("item-%d", i))
+	}
+
+	exact := f.EstimatedFillRatio()
+	if exact <= 0 || exact >= 1 {
+		t.Fatalf("exact fill ratio out of range: %f", exact)
+	}
+
+	// Sampling a few thousand blocks should approximate the exact ratio closely.
+	for _, n := range []int{256, 1024, 4096} {
+		got := f.SampledFillRatio(n)
+		relErr := math.Abs(got-exact) / exact
+		t.Logf("sample=%d: sampled=%.5f exact=%.5f relErr=%.3f%%", n, got, exact, relErr*100)
+		if relErr > 0.05 {
+			t.Errorf("sample=%d: sampled fill ratio %.5f differs from exact %.5f by %.2f%% (>5%%)",
+				n, got, exact, relErr*100)
+		}
+	}
+
+	// sampleBlocks <= 0 or >= numBlocks falls back to a full scan == EstimatedFillRatio.
+	if got := f.SampledFillRatio(0); got != exact {
+		t.Errorf("SampledFillRatio(0) = %f, want full-scan %f", got, exact)
+	}
+	if got := f.SampledFillRatio(-5); got != exact {
+		t.Errorf("SampledFillRatio(-5) = %f, want full-scan %f", got, exact)
+	}
+	if got := f.SampledFillRatio(int(f.NumBlocks()) + 1); got != exact {
+		t.Errorf("SampledFillRatio(>numBlocks) = %f, want full-scan %f", got, exact)
+	}
+}
+
+func TestSampledFillRatioAtomicAndSharded(t *testing.T) {
+	const items = 1_000_000
+	af := NewAtomic(items, 0.01)
+	sf := NewShardedAtomic(items, 0.01, 16)
+	for i := range items {
+		key := fmt.Sprintf("item-%d", i)
+		af.AddString(key)
+		sf.AddString(key)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		exact   float64
+		sampled func(int) float64
+	}{
+		{"AtomicFilter", af.EstimatedFillRatio(), af.SampledFillRatio},
+		{"ShardedAtomicFilter", sf.EstimatedFillRatio(), sf.SampledFillRatio},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.sampled(4096)
+			relErr := math.Abs(got-tc.exact) / tc.exact
+			if relErr > 0.05 {
+				t.Errorf("%s: sampled %.5f vs exact %.5f, relErr %.2f%% (>5%%)",
+					tc.name, got, tc.exact, relErr*100)
+			}
+			if got := tc.sampled(0); got != tc.exact {
+				t.Errorf("%s: SampledFillRatio(0) = %f, want full-scan %f", tc.name, got, tc.exact)
+			}
+		})
+	}
+}
+
 func TestAtomicFilterBasic(t *testing.T) {
 	f := NewAtomic(1000, 0.01)
 

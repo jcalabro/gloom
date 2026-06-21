@@ -176,12 +176,58 @@ func (f *Filter) NumBlocks() uint64 {
 }
 
 // EstimatedFillRatio estimates the proportion of bits that are set.
+//
+// This scans the entire bit array (O(memory)): for a multi-gigabyte filter it touches every
+// cache line and takes tens of milliseconds. Avoid calling it on a hot path or in a frequent
+// metrics-collection loop; for periodic monitoring of a large filter prefer
+// [Filter.SampledFillRatio], which has a fixed, small cost.
 func (f *Filter) EstimatedFillRatio() float64 {
 	var setBits uint64
 	for _, word := range f.blocks {
 		setBits += uint64(bits.OnesCount64(word))
 	}
 	return float64(setBits) / float64(f.numBlocks*BlockBits)
+}
+
+// SampledFillRatio estimates the proportion of bits set by examining a sample of evenly
+// spaced blocks rather than the whole array, giving a fixed, small cost independent of
+// filter size. sampleBlocks is the number of 512-bit blocks to inspect; values <= 0 or
+// larger than the block count fall back to a full scan (equivalent to EstimatedFillRatio).
+//
+// Because items are spread uniformly across blocks, a few thousand sampled blocks estimate
+// the fill ratio to well under 1% relative error regardless of the total block count, making
+// this suitable for frequent monitoring of very large filters.
+func (f *Filter) SampledFillRatio(sampleBlocks int) float64 {
+	idx, count := sampledBlockIndices(f.numBlocks, sampleBlocks)
+	if count == f.numBlocks {
+		return f.EstimatedFillRatio()
+	}
+	var setBits uint64
+	for _, b := range idx {
+		base := b * BlockWords
+		for w := range uint64(BlockWords) {
+			setBits += uint64(bits.OnesCount64(f.blocks[base+w]))
+		}
+	}
+	return float64(setBits) / float64(count*BlockBits)
+}
+
+// sampledBlockIndices returns the indices of `sampleBlocks` evenly spaced blocks out of
+// numBlocks, along with the number sampled. If sampleBlocks <= 0 or >= numBlocks it returns
+// a nil slice and count == numBlocks to signal "sample everything" (the caller does a full
+// scan). The stride is deterministic so results are reproducible across calls.
+func sampledBlockIndices(numBlocks uint64, sampleBlocks int) (indices []uint64, count uint64) {
+	if sampleBlocks <= 0 || uint64(sampleBlocks) >= numBlocks {
+		return nil, numBlocks
+	}
+	n := uint64(sampleBlocks)
+	indices = make([]uint64, n)
+	// Evenly spaced sample points: floor(i * numBlocks / n) is strictly increasing for
+	// n <= numBlocks, so the indices are distinct and span the whole array.
+	for i := range n {
+		indices[i] = i * numBlocks / n
+	}
+	return indices, n
 }
 
 // EstimatedFalsePositiveRate estimates the current false positive rate
@@ -483,8 +529,30 @@ func (f *AtomicFilter) setBitCount() uint64 {
 }
 
 // EstimatedFillRatio estimates the proportion of bits that are set.
+//
+// Like [Filter.EstimatedFillRatio] this scans the whole array (O(memory)), and here each
+// word is read with an atomic load. Prefer [AtomicFilter.SampledFillRatio] for frequent
+// monitoring of large filters.
 func (f *AtomicFilter) EstimatedFillRatio() float64 {
 	return float64(f.setBitCount()) / float64(f.numBlocks*BlockBits)
+}
+
+// SampledFillRatio estimates the fill ratio from a sample of evenly spaced blocks at fixed,
+// small cost. See [Filter.SampledFillRatio]. sampleBlocks <= 0 or >= the block count falls
+// back to a full scan.
+func (f *AtomicFilter) SampledFillRatio(sampleBlocks int) float64 {
+	idx, count := sampledBlockIndices(f.numBlocks, sampleBlocks)
+	if count == f.numBlocks {
+		return f.EstimatedFillRatio()
+	}
+	var setBits uint64
+	for _, b := range idx {
+		base := b * BlockWords
+		for w := range uint64(BlockWords) {
+			setBits += uint64(bits.OnesCount64(f.blocks[base+w].Load()))
+		}
+	}
+	return float64(setBits) / float64(count*BlockBits)
 }
 
 // EstimatedFalsePositiveRate estimates the current false positive rate.
@@ -602,6 +670,9 @@ func (f *ShardedAtomicFilter) NumBlocks() uint64 {
 }
 
 // EstimatedFillRatio estimates the average fill ratio across all shards.
+//
+// This scans every shard's full bit array (O(total memory)). Prefer
+// [ShardedAtomicFilter.SampledFillRatio] for frequent monitoring of large filters.
 func (f *ShardedAtomicFilter) EstimatedFillRatio() float64 {
 	var totalBits, setBits uint64
 	for _, shard := range f.shards {
@@ -610,6 +681,22 @@ func (f *ShardedAtomicFilter) EstimatedFillRatio() float64 {
 	}
 	// totalBits is always > 0 since shards always have capacity
 	return float64(setBits) / float64(totalBits)
+}
+
+// SampledFillRatio estimates the fill ratio at fixed, small cost by sampling blocks across
+// the shards. See [Filter.SampledFillRatio]. The sample budget is divided evenly across
+// shards; sampleBlocks <= 0 falls back to a full scan.
+func (f *ShardedAtomicFilter) SampledFillRatio(sampleBlocks int) float64 {
+	if sampleBlocks <= 0 {
+		return f.EstimatedFillRatio()
+	}
+	// Divide the budget across shards, at least one block each.
+	perShard := max(sampleBlocks/len(f.shards), 1)
+	var sum float64
+	for _, shard := range f.shards {
+		sum += shard.SampledFillRatio(perShard)
+	}
+	return sum / float64(len(f.shards))
 }
 
 // EstimatedFalsePositiveRate estimates the current false positive rate.
