@@ -293,7 +293,7 @@ type AtomicFilter struct {
 	k         uint32          // Number of hash functions (partitions)
 	primes    []uint32        // Prime partition sizes
 	offsets   []uint32        // Cumulative offsets within block
-	count     atomic.Uint64   // Number of items added (approximate)
+	count     *stripedCounter // Number of items added (approximate), striped to avoid contention
 }
 
 // NewAtomic creates a new thread-safe bloom filter optimized for the
@@ -324,6 +324,7 @@ func NewAtomicWithParams(numBlocks uint64, k uint32) *AtomicFilter {
 		k:         k,
 		primes:    primes,
 		offsets:   ComputeOffsets(primes),
+		count:     newStripedCounter(),
 	}
 }
 
@@ -365,7 +366,9 @@ func (f *AtomicFilter) addWithHash(blockIdx uint64, intraHash uint32) {
 		f.blocks[blockBase+uint64(wordIdx)].Or(mask)
 	}
 
-	f.count.Add(1)
+	// Stripe the counter increment by block index so concurrent writers spread across
+	// cache lines instead of serializing on a single shared counter.
+	f.count.add(blockIdx)
 }
 
 // Test checks if data might be in the bloom filter.
@@ -409,7 +412,7 @@ func (f *AtomicFilter) K() uint32 {
 
 // Count returns the approximate number of items added to the filter.
 func (f *AtomicFilter) Count() uint64 {
-	return f.count.Load()
+	return f.count.load()
 }
 
 // NumBlocks returns the number of 512-bit blocks in the filter.
@@ -433,7 +436,7 @@ func (f *AtomicFilter) EstimatedFillRatio() float64 {
 
 // EstimatedFalsePositiveRate estimates the current false positive rate.
 func (f *AtomicFilter) EstimatedFalsePositiveRate() float64 {
-	return EstimateFalsePositiveRate(f.numBlocks, f.k, f.count.Load())
+	return EstimateFalsePositiveRate(f.numBlocks, f.k, f.count.load())
 }
 
 // ShardedAtomicFilter is a thread-safe bloom filter that distributes writes
