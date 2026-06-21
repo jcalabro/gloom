@@ -146,7 +146,7 @@ Traditional bloom filters use k independent hash functions, each potentially acc
                   ▼
 ┌───────────────────────────────────┐
 │       xxh3.Hash128(key)           │
-│  hi = 0xA1B2C3D4...  lo = 0x...    │
+│  hi = 0xA1B2C3D4...  lo = 0x...   │
 └─────────────────┬─────────────────┘
                   │
     ┌─────────────┴─────────────┐
