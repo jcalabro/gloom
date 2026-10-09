@@ -1,0 +1,2 @@
+# Golden files are byte-exact fixtures; never let git normalize them.
+testdata/golden/** -text

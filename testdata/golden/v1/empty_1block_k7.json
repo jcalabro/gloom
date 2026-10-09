@@ -1,0 +1,13 @@
+{
+  "description": "single-block filter with nothing added (all-zero block data)",
+  "format_version": 1,
+  "sha256": "49f479c6d76ec695ccdaec9383a1dc532d9246f3cbda3daa0bb1b4a86c1b3f74",
+  "num_blocks": 1,
+  "k": 7,
+  "count": 0,
+  "num_keys": 0,
+  "method": "bytes",
+  "edge_keys": false,
+  "num_probes": 256,
+  "probe_results": "0000000000000000000000000000000000000000000000000000000000000000"
+}
