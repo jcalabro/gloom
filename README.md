@@ -53,7 +53,9 @@ func main() {
 package main
 
 import (
+    "fmt"
     "sync"
+
     "github.com/jcalabro/gloom"
 )
 
@@ -86,7 +88,9 @@ across them:
 package main
 
 import (
+    "fmt"
     "sync"
+
     "github.com/jcalabro/gloom"
 )
 
