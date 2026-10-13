@@ -1,6 +1,6 @@
 module github.com/jcalabro/gloom/benchmarks
 
-go 1.23.0
+go 1.26.0
 
 require (
 	github.com/bits-and-blooms/bloom/v3 v3.7.1

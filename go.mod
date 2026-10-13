@@ -1,6 +1,6 @@
 module github.com/jcalabro/gloom
 
-go 1.23
+go 1.26
 
 require github.com/zeebo/xxh3 v1.0.2
 
