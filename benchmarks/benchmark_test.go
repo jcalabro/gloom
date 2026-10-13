@@ -323,25 +323,19 @@ func BenchmarkHighContention_AtomicBloom(b *testing.B) {
 // Throughput Test (items per second)
 // ============================================================================
 
+// Filter is not safe for concurrent use, so this runs a single worker. It adds
+// the same number of items per op as BenchmarkThroughput_GloomAtomic.
 func BenchmarkThroughput_Gloom(b *testing.B) {
-	const goroutines = 8
-	const itemsPerGoroutine = 100000
+	const items = 800000
 
-	f := gloom.New(uint64(goroutines*itemsPerGoroutine), benchFPRate)
+	f := gloom.New(items, benchFPRate)
 
 	for b.Loop() {
-		var wg sync.WaitGroup
-		for gid := range goroutines {
-			wg.Go(func() {
-				base := gid * itemsPerGoroutine
-				for i := range itemsPerGoroutine {
-					f.Add(testKeys[(base+i)%benchItems])
-				}
-			})
+		for i := range items {
+			f.Add(testKeys[i%benchItems])
 		}
-		wg.Wait()
 	}
-	b.ReportMetric(float64(goroutines*itemsPerGoroutine), "items/op")
+	b.ReportMetric(items, "items/op")
 }
 
 func BenchmarkThroughput_GloomAtomic(b *testing.B) {
