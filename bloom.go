@@ -517,7 +517,6 @@ func (f *AtomicFilter) addWithHash(blockIdx uint64, intraHash uint32) {
 		wordIdx := bitPos / 64
 		bitIdx := bitPos % 64
 		mask := uint64(1) << bitIdx
-		// Use atomic OR - most efficient on Go 1.23+
 		f.blocks[blockBase+uint64(wordIdx)].Or(mask)
 	}
 

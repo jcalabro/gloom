@@ -182,16 +182,14 @@ func TestAtomicFilterConcurrent(t *testing.T) {
 	const itemsPerGoroutine = 10000
 
 	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
 
-	for g := range numGoroutines {
-		go func(goroutineID int) {
-			defer wg.Done()
+	for goroutineID := range numGoroutines {
+		wg.Go(func() {
 			for i := range itemsPerGoroutine {
 				key := fmt.Sprintf("g%d-item-%d", goroutineID, i)
 				f.AddString(key)
 			}
-		}(g)
+		})
 	}
 
 	wg.Wait()
@@ -229,29 +227,26 @@ func TestAtomicFilterConcurrentMixed(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(numGoroutines * 2) // writers and readers
 
 	// Writers
-	for g := range numGoroutines {
-		go func(goroutineID int) {
-			defer wg.Done()
+	for goroutineID := range numGoroutines {
+		wg.Go(func() {
 			for i := range opsPerGoroutine {
 				f.AddString(fmt.Sprintf("write-g%d-%d", goroutineID, i))
 			}
-		}(g)
+		})
 	}
 
 	// Readers
-	for g := range numGoroutines {
-		go func(goroutineID int) {
-			defer wg.Done()
+	for goroutineID := range numGoroutines {
+		wg.Go(func() {
 			for i := range opsPerGoroutine {
 				// Test prepopulated items (should always be present)
 				f.TestString(fmt.Sprintf("prepop-%d", i%1000))
 				// Test items being written (may or may not be present)
 				f.TestString(fmt.Sprintf("write-g%d-%d", goroutineID, i))
 			}
-		}(g)
+		})
 	}
 
 	wg.Wait()
@@ -454,16 +449,14 @@ func TestShardedAtomicFilterConcurrent(t *testing.T) {
 	const itemsPerGoroutine = 10000
 
 	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
 
-	for g := range numGoroutines {
-		go func(goroutineID int) {
-			defer wg.Done()
+	for goroutineID := range numGoroutines {
+		wg.Go(func() {
 			for i := range itemsPerGoroutine {
 				key := fmt.Sprintf("g%d-item-%d", goroutineID, i)
 				f.AddString(key)
 			}
-		}(g)
+		})
 	}
 
 	wg.Wait()
@@ -1202,14 +1195,12 @@ func TestConcurrentNoFalseNegatives(t *testing.T) {
 		var wg sync.WaitGroup
 
 		// Concurrently add items
-		for g := range numGoroutines {
-			wg.Add(1)
-			go func(goroutineID int) {
-				defer wg.Done()
+		for goroutineID := range numGoroutines {
+			wg.Go(func() {
 				for i := range itemsPerGo {
 					f.Add(fmt.Appendf(nil, "concurrent-%d-%d", goroutineID, i))
 				}
-			}(g)
+			})
 		}
 		wg.Wait()
 
@@ -1228,14 +1219,12 @@ func TestConcurrentNoFalseNegatives(t *testing.T) {
 		f := NewShardedAtomic(numGoroutines*itemsPerGo, 0.01, 16)
 		var wg sync.WaitGroup
 
-		for g := range numGoroutines {
-			wg.Add(1)
-			go func(goroutineID int) {
-				defer wg.Done()
+		for goroutineID := range numGoroutines {
+			wg.Go(func() {
 				for i := range itemsPerGo {
 					f.Add(fmt.Appendf(nil, "concurrent-%d-%d", goroutineID, i))
 				}
-			}(g)
+			})
 		}
 		wg.Wait()
 
@@ -1278,23 +1267,19 @@ func TestConcurrentStressAtomicFilter(t *testing.T) {
 	}
 
 	// Start writers
-	for w := range numWriters {
-		wg.Add(1)
-		go func(writerID int) {
-			defer wg.Done()
+	for writerID := range numWriters {
+		wg.Go(func() {
 			for i := range itemsPerWriter {
 				key := fmt.Appendf(nil, "stress-%d-%d", writerID, i)
 				f.Add(key)
 				added[writerID][i] = true
 			}
-		}(w)
+		})
 	}
 
 	// Start readers that continuously test random keys
-	for r := range numReaders {
-		wg.Add(1)
-		go func(readerID int) {
-			defer wg.Done()
+	for readerID := range numReaders {
+		wg.Go(func() {
 			for i := range readsPerReader {
 				// Test a key that might or might not exist
 				writerID := (readerID + i) % numWriters
@@ -1302,7 +1287,7 @@ func TestConcurrentStressAtomicFilter(t *testing.T) {
 				key := fmt.Appendf(nil, "stress-%d-%d", writerID, itemID)
 				_ = f.Test(key) // Just exercise the read path
 			}
-		}(r)
+		})
 	}
 
 	wg.Wait()
@@ -1348,26 +1333,22 @@ func TestConcurrentStressShardedFilter(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Start writers and readers simultaneously
-	for w := range numWriters {
-		wg.Add(1)
-		go func(writerID int) {
-			defer wg.Done()
+	for writerID := range numWriters {
+		wg.Go(func() {
 			for i := range itemsPerWriter {
 				f.AddString(fmt.Sprintf("sharded-stress-%d-%d", writerID, i))
 			}
-		}(w)
+		})
 	}
 
-	for r := range numReaders {
-		wg.Add(1)
-		go func(readerID int) {
-			defer wg.Done()
+	for readerID := range numReaders {
+		wg.Go(func() {
 			for i := range readsPerReader {
 				writerID := (readerID + i) % numWriters
 				itemID := i % itemsPerWriter
 				_ = f.TestString(fmt.Sprintf("sharded-stress-%d-%d", writerID, itemID))
 			}
-		}(r)
+		})
 	}
 
 	wg.Wait()
@@ -1401,10 +1382,8 @@ func TestConcurrentStressMethodMix(t *testing.T) {
 	f := NewAtomic(numGoroutines*opsPerRoutine, 0.01)
 	var wg sync.WaitGroup
 
-	for g := range numGoroutines {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
+	for id := range numGoroutines {
+		wg.Go(func() {
 			for i := range opsPerRoutine {
 				key := fmt.Sprintf("mix-%d-%d", id, i)
 
@@ -1420,7 +1399,7 @@ func TestConcurrentStressMethodMix(t *testing.T) {
 					_ = f.EstimatedFalsePositiveRate()
 				}
 			}
-		}(g)
+		})
 	}
 
 	wg.Wait()

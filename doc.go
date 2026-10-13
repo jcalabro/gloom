@@ -31,7 +31,7 @@
 //
 // [AtomicFilter] provides thread-safety using lock-free atomic operations.
 // Multiple goroutines can safely call Add and Test concurrently. It uses
-// [sync/atomic.Uint64.Or] (Go 1.23+) for efficient atomic bit-setting.
+// [sync/atomic.Uint64.Or] for efficient atomic bit-setting.
 //
 // [ShardedAtomicFilter] distributes keys across multiple independent shards
 // to reduce contention under heavy parallel writes. The shard count is

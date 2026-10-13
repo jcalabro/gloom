@@ -14,16 +14,14 @@ func TestStripedCounterExact(t *testing.T) {
 	const goroutines = 16
 	const perG = 100_000
 	var wg sync.WaitGroup
-	for g := range goroutines {
-		wg.Add(1)
-		go func(seed uint64) {
-			defer wg.Done()
+	for g := range uint64(goroutines) {
+		wg.Go(func() {
 			for i := range uint64(perG) {
 				// Vary the stripe index widely, including values that alias the same
 				// stripe, to exercise both contended and uncontended paths.
-				c.add(seed*0x9e3779b97f4a7c15 + i)
+				c.add(g*0x9e3779b97f4a7c15 + i)
 			}
-		}(uint64(g))
+		})
 	}
 	wg.Wait()
 
@@ -72,14 +70,12 @@ func TestAtomicFilterCountExactConcurrent(t *testing.T) {
 	const goroutines = 16
 	const perG = 50_000
 	var wg sync.WaitGroup
-	for g := range goroutines {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
+	for id := range goroutines {
+		wg.Go(func() {
 			for i := range perG {
 				f.AddString(fmtKey(id, i))
 			}
-		}(g)
+		})
 	}
 	wg.Wait()
 

@@ -52,27 +52,23 @@ func Example_concurrent() {
 	var wg sync.WaitGroup
 
 	// Spawn multiple writers
-	for i := range 4 {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
+	for id := range 4 {
+		wg.Go(func() {
 			for j := range 1000 {
 				key := fmt.Sprintf("worker-%d-item-%d", id, j)
 				f.AddString(key)
 			}
-		}(i)
+		})
 	}
 
 	// Spawn multiple readers (can run concurrently with writers)
-	for i := range 4 {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
+	for id := range 4 {
+		wg.Go(func() {
 			for j := range 1000 {
 				key := fmt.Sprintf("worker-%d-item-%d", id, j)
 				_ = f.TestString(key)
 			}
-		}(i)
+		})
 	}
 
 	wg.Wait()
@@ -91,14 +87,12 @@ func Example_sharded() {
 	var wg sync.WaitGroup
 
 	// High-throughput parallel writes
-	for i := range 8 {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
+	for id := range 8 {
+		wg.Go(func() {
 			for j := range 10_000 {
 				f.AddString(fmt.Sprintf("key-%d-%d", id, j))
 			}
-		}(i)
+		})
 	}
 
 	wg.Wait()
@@ -163,17 +157,14 @@ func ExampleNewAtomic() {
 
 	// Safe to call from multiple goroutines
 	var wg sync.WaitGroup
-	wg.Add(2)
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		f.AddString("from-goroutine-1")
-	}()
+	})
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		f.AddString("from-goroutine-2")
-	}()
+	})
 
 	wg.Wait()
 	fmt.Println("Count:", f.Count())

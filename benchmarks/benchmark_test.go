@@ -40,40 +40,35 @@ func init() {
 
 func BenchmarkAddSequential_Gloom(b *testing.B) {
 	f := gloom.New(benchItems, benchFPRate)
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.Add(testKeys[i%benchItems])
 	}
 }
 
 func BenchmarkAddSequential_GloomString(b *testing.B) {
 	f := gloom.New(benchItems, benchFPRate)
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.AddString(testKeysStr[i%benchItems])
 	}
 }
 
 func BenchmarkAddSequential_GloomAtomic(b *testing.B) {
 	f := gloom.NewAtomic(benchItems, benchFPRate)
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.Add(testKeys[i%benchItems])
 	}
 }
 
 func BenchmarkAddSequential_BitsAndBlooms(b *testing.B) {
 	f := bab.NewWithEstimates(benchItems, benchFPRate)
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.Add(testKeys[i%benchItems])
 	}
 }
 
 func BenchmarkAddSequential_AtomicBloom(b *testing.B) {
 	f := atomicbloom.NewWithEstimates(benchItems, benchFPRate)
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.Add(testKeys[i%benchItems])
 	}
 }
@@ -83,8 +78,7 @@ func BenchmarkAddSequential_Blobloom(b *testing.B) {
 		Capacity: benchItems,
 		FPRate:   benchFPRate,
 	})
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		// blobloom requires pre-hashing
 		h := xxhash.Sum64(testKeys[i%benchItems])
 		f.Add(h)
@@ -100,8 +94,7 @@ func BenchmarkTestSequential_Gloom(b *testing.B) {
 	for i := range benchItems {
 		f.Add(testKeys[i])
 	}
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.Test(testKeys[i%benchItems])
 	}
 }
@@ -111,8 +104,7 @@ func BenchmarkTestSequential_GloomString(b *testing.B) {
 	for i := range benchItems {
 		f.Add(testKeys[i])
 	}
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.TestString(testKeysStr[i%benchItems])
 	}
 }
@@ -122,8 +114,7 @@ func BenchmarkTestSequential_GloomAtomic(b *testing.B) {
 	for i := range benchItems {
 		f.Add(testKeys[i])
 	}
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.Test(testKeys[i%benchItems])
 	}
 }
@@ -133,8 +124,7 @@ func BenchmarkTestSequential_BitsAndBlooms(b *testing.B) {
 	for i := range benchItems {
 		f.Add(testKeys[i])
 	}
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.Test(testKeys[i%benchItems])
 	}
 }
@@ -144,8 +134,7 @@ func BenchmarkTestSequential_AtomicBloom(b *testing.B) {
 	for i := range benchItems {
 		f.Add(testKeys[i])
 	}
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.Test(testKeys[i%benchItems])
 	}
 }
@@ -161,8 +150,7 @@ func BenchmarkTestSequential_Blobloom(b *testing.B) {
 		hashes[i] = xxhash.Sum64(testKeys[i])
 		f.Add(hashes[i])
 	}
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.Has(hashes[i%benchItems])
 	}
 }
@@ -280,8 +268,7 @@ func BenchmarkMixed_AtomicBloom(b *testing.B) {
 func BenchmarkAddAlloc_Gloom(b *testing.B) {
 	f := gloom.New(benchItems, benchFPRate)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.Add(testKeys[i%benchItems])
 	}
 }
@@ -289,8 +276,7 @@ func BenchmarkAddAlloc_Gloom(b *testing.B) {
 func BenchmarkAddAlloc_GloomString(b *testing.B) {
 	f := gloom.New(benchItems, benchFPRate)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.AddString(testKeysStr[i%benchItems])
 	}
 }
@@ -298,8 +284,7 @@ func BenchmarkAddAlloc_GloomString(b *testing.B) {
 func BenchmarkAddAlloc_BitsAndBlooms(b *testing.B) {
 	f := bab.NewWithEstimates(benchItems, benchFPRate)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.Add(testKeys[i%benchItems])
 	}
 }
@@ -344,18 +329,15 @@ func BenchmarkThroughput_Gloom(b *testing.B) {
 
 	f := gloom.New(uint64(goroutines*itemsPerGoroutine), benchFPRate)
 
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		var wg sync.WaitGroup
-		wg.Add(goroutines)
-		for g := range goroutines {
-			go func(gid int) {
-				defer wg.Done()
+		for gid := range goroutines {
+			wg.Go(func() {
 				base := gid * itemsPerGoroutine
 				for i := range itemsPerGoroutine {
 					f.Add(testKeys[(base+i)%benchItems])
 				}
-			}(g)
+			})
 		}
 		wg.Wait()
 	}
@@ -368,18 +350,15 @@ func BenchmarkThroughput_GloomAtomic(b *testing.B) {
 
 	f := gloom.NewAtomic(uint64(goroutines*itemsPerGoroutine), benchFPRate)
 
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		var wg sync.WaitGroup
-		wg.Add(goroutines)
-		for g := range goroutines {
-			go func(gid int) {
-				defer wg.Done()
+		for gid := range goroutines {
+			wg.Go(func() {
 				base := gid * itemsPerGoroutine
 				for i := range itemsPerGoroutine {
 					f.Add(testKeys[(base+i)%benchItems])
 				}
-			}(g)
+			})
 		}
 		wg.Wait()
 	}
@@ -392,8 +371,7 @@ func BenchmarkThroughput_GloomAtomic(b *testing.B) {
 
 func BenchmarkAddSequential_GloomSharded(b *testing.B) {
 	f := gloom.NewShardedAtomic(benchItems, benchFPRate, 16)
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.Add(testKeys[i%benchItems])
 	}
 }
@@ -403,8 +381,7 @@ func BenchmarkTestSequential_GloomSharded(b *testing.B) {
 	for i := range benchItems {
 		f.Add(testKeys[i])
 	}
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		f.Test(testKeys[i%benchItems])
 	}
 }
@@ -475,18 +452,15 @@ func BenchmarkThroughput_GloomSharded(b *testing.B) {
 
 	f := gloom.NewShardedAtomic(uint64(goroutines*itemsPerGoroutine), benchFPRate, 16)
 
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		var wg sync.WaitGroup
-		wg.Add(goroutines)
-		for g := range goroutines {
-			go func(gid int) {
-				defer wg.Done()
+		for gid := range goroutines {
+			wg.Go(func() {
 				base := gid * itemsPerGoroutine
 				for i := range itemsPerGoroutine {
 					f.Add(testKeys[(base+i)%benchItems])
 				}
-			}(g)
+			})
 		}
 		wg.Wait()
 	}
@@ -541,8 +515,7 @@ func BenchmarkHistogramAdd_Gloom(b *testing.B) {
 	f := gloom.New(benchItems, benchFPRate)
 	hist := newHistogram(histogramSamples)
 
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		idx := i % benchItems
 		start := time.Now()
 		f.Add(testKeys[idx])
@@ -557,8 +530,7 @@ func BenchmarkHistogramAdd_GloomString(b *testing.B) {
 	f := gloom.New(benchItems, benchFPRate)
 	hist := newHistogram(histogramSamples)
 
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		idx := i % benchItems
 		start := time.Now()
 		f.AddString(testKeysStr[idx])
@@ -573,8 +545,7 @@ func BenchmarkHistogramAdd_GloomAtomic(b *testing.B) {
 	f := gloom.NewAtomic(benchItems, benchFPRate)
 	hist := newHistogram(histogramSamples)
 
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		idx := i % benchItems
 		start := time.Now()
 		f.Add(testKeys[idx])
@@ -589,8 +560,7 @@ func BenchmarkHistogramAdd_GloomSharded(b *testing.B) {
 	f := gloom.NewShardedAtomic(benchItems, benchFPRate, 16)
 	hist := newHistogram(histogramSamples)
 
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		idx := i % benchItems
 		start := time.Now()
 		f.Add(testKeys[idx])
@@ -605,8 +575,7 @@ func BenchmarkHistogramAdd_BitsAndBlooms(b *testing.B) {
 	f := bab.NewWithEstimates(benchItems, benchFPRate)
 	hist := newHistogram(histogramSamples)
 
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		idx := i % benchItems
 		start := time.Now()
 		f.Add(testKeys[idx])
@@ -621,8 +590,7 @@ func BenchmarkHistogramAdd_AtomicBloom(b *testing.B) {
 	f := atomicbloom.NewWithEstimates(benchItems, benchFPRate)
 	hist := newHistogram(histogramSamples)
 
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		idx := i % benchItems
 		start := time.Now()
 		f.Add(testKeys[idx])
@@ -640,8 +608,7 @@ func BenchmarkHistogramAdd_Blobloom(b *testing.B) {
 	})
 	hist := newHistogram(histogramSamples)
 
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		idx := i % benchItems
 		start := time.Now()
 		h := xxhash.Sum64(testKeys[idx])
@@ -664,8 +631,7 @@ func BenchmarkHistogramTest_Gloom(b *testing.B) {
 	}
 	hist := newHistogram(histogramSamples)
 
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		idx := i % benchItems
 		start := time.Now()
 		f.Test(testKeys[idx])
@@ -683,8 +649,7 @@ func BenchmarkHistogramTest_GloomString(b *testing.B) {
 	}
 	hist := newHistogram(histogramSamples)
 
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		idx := i % benchItems
 		start := time.Now()
 		f.TestString(testKeysStr[idx])
@@ -702,8 +667,7 @@ func BenchmarkHistogramTest_GloomAtomic(b *testing.B) {
 	}
 	hist := newHistogram(histogramSamples)
 
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		idx := i % benchItems
 		start := time.Now()
 		f.Test(testKeys[idx])
@@ -721,8 +685,7 @@ func BenchmarkHistogramTest_GloomSharded(b *testing.B) {
 	}
 	hist := newHistogram(histogramSamples)
 
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		idx := i % benchItems
 		start := time.Now()
 		f.Test(testKeys[idx])
@@ -740,8 +703,7 @@ func BenchmarkHistogramTest_BitsAndBlooms(b *testing.B) {
 	}
 	hist := newHistogram(histogramSamples)
 
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		idx := i % benchItems
 		start := time.Now()
 		f.Test(testKeys[idx])
@@ -759,8 +721,7 @@ func BenchmarkHistogramTest_AtomicBloom(b *testing.B) {
 	}
 	hist := newHistogram(histogramSamples)
 
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		idx := i % benchItems
 		start := time.Now()
 		f.Test(testKeys[idx])
@@ -783,8 +744,7 @@ func BenchmarkHistogramTest_Blobloom(b *testing.B) {
 	}
 	hist := newHistogram(histogramSamples)
 
-	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; b.Loop(); i++ {
 		idx := i % benchItems
 		start := time.Now()
 		f.Has(hashes[idx])
