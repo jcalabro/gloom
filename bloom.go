@@ -20,6 +20,54 @@ const cacheLineSize = 64
 // (1<<50 blocks is ~64 petabytes). Enforced by both the constructors and UnmarshalBinary.
 const maxNumBlocks = uint64(1) << 50
 
+// BloomFilter is the method set shared by [Filter], [AtomicFilter], and
+// [ShardedAtomicFilter], for code that wants to be generic over the filter type.
+//
+// Calling through the interface incurs dynamic dispatch and prevents inlining, so
+// prefer the concrete types on hot paths. Serialization is not part of the interface
+// because only [Filter] supports it.
+type BloomFilter interface {
+	// Add adds data to the filter.
+	Add(data []byte)
+
+	// AddString adds a string to the filter without allocating.
+	AddString(s string)
+
+	// Test reports whether data may be in the filter. False positives are possible;
+	// false negatives are not.
+	Test(data []byte) bool
+
+	// TestString reports whether s may be in the filter.
+	TestString(s string) bool
+
+	// Cap returns the filter's capacity in bits.
+	Cap() uint64
+
+	// K returns the number of hash functions.
+	K() uint32
+
+	// Count returns the approximate number of items added.
+	Count() uint64
+
+	// NumBlocks returns the total number of 512-bit blocks.
+	NumBlocks() uint64
+
+	// EstimatedFillRatio returns the fraction of set bits by scanning the whole bit array.
+	EstimatedFillRatio() float64
+
+	// SampledFillRatio estimates the fraction of set bits from a sample of blocks.
+	SampledFillRatio(sampleBlocks int) float64
+
+	// EstimatedFalsePositiveRate estimates the current false positive rate.
+	EstimatedFalsePositiveRate() float64
+}
+
+var (
+	_ BloomFilter = (*Filter)(nil)
+	_ BloomFilter = (*AtomicFilter)(nil)
+	_ BloomFilter = (*ShardedAtomicFilter)(nil)
+)
+
 // Filter is a non-thread-safe bloom filter using cache-line blocked
 // one-hashing for optimal performance.
 //
