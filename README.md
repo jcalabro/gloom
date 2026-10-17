@@ -178,14 +178,15 @@ Traditional bloom filters use k independent hash functions, each potentially acc
 │ │ │ 67   │ 71   │ 73   │ 79   │ 83   │ 89   │ 50   │ ← prime │    │
 │ │ │ bits │ bits │ bits │ bits │ bits │ bits │ bits │   sizes │    │
 │ │ └──┬───┴──┬───┴──┬───┴──┬───┴──┬───┴──┬───┴──┬───┘         │    │
-│ │    │      │      │      │      │      │                    │    │
+│ │    │      │      │      │      │      │      │             │    │
 │ │    ▼      ▼      ▼      ▼      ▼      ▼      ▼             │    │
 │ │  h%67   h%71   h%73   h%79   h%83   h%89   h%50            │    │
 │ │  =23    =45    =12    =67    =34    =78    =40             │    │
 │ │    │      │      │      │      │      │      │             │    │
 │ │    ▼      ▼      ▼      ▼      ▼      ▼      ▼             │    │
-│ │  SET    SET    SET    SET    SET    SET    SET             │    │
-│ │ bit 23 bit 112 bit 185 bit 264 bit 347 bit 436 bit 486     │    │
+│ │   SET    SET    SET    SET    SET    SET    SET            │    │
+│ │   bit    bit    bit    bit    bit    bit    bit            │    │
+│ │    23    112    185    264    347    436    486            │    │
 │ └────────────────────────────────────────────────────────────┘    │
 └───────────────────────────────────────────────────────────────────┘
 ```
