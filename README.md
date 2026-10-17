@@ -186,7 +186,7 @@ Traditional bloom filters use k independent hash functions, each potentially acc
 │ │    ▼      ▼      ▼      ▼      ▼      ▼      ▼             │    │
 │ │   SET    SET    SET    SET    SET    SET    SET            │    │
 │ │   bit    bit    bit    bit    bit    bit    bit            │    │
-│ │    23    112    185    264    347    436    486            │    │
+│ │    23    112    150    278    324    451    502            │    │
 │ └────────────────────────────────────────────────────────────┘    │
 └───────────────────────────────────────────────────────────────────┘
 ```
